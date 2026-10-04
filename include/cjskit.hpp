@@ -8945,8 +8945,8 @@ namespace cjs {
 
             SetAttribute(ctx, global, "window", global);
             SetAttribute(ctx, global, "global", global);
-            AppendMethod(ctx, global, "eval", global_eval);
-            AppendMethod(ctx, global, "using", global_using);
+            //AppendMethod(ctx, global, "eval", global_eval);
+            AppendMethod(ctx, global, "use", global_use);
 
             AppendMethod(ctx, global, "wait", global_wait);
             AppendMethod(ctx, global, "btoa", global_btoa);
@@ -8955,15 +8955,6 @@ namespace cjs {
             AppendMethod(ctx, global, "setTimeout", global_setTimeout);
             AppendMethod(ctx, global, "clearTimeout", global_clearTimeout);
             AppendMethod(ctx, global, "Blob", NewConstructor(ctx, "Blob", global_Blob));
-
-
-
-
-
-
-
-
-
 
             JSV system = NewObject(ctx, global, "system");
             SetSymbolName(ctx, system, "System");
@@ -9142,11 +9133,6 @@ namespace cjs {
                     successCount++;
                 }
 
-                if (isAll || chosedModules.count("extension")) {
-                    ApplyExtension(jsmd.js);
-                    successCount++;
-                }
-
                 if (isAll || chosedModules.count("library")) {
 
                     FileController* fc = NewInstance<FileController>(L"./Library/", apppath(0));
@@ -9159,6 +9145,11 @@ namespace cjs {
                     }
                     delete fc;
 
+                }
+
+                if (isAll || chosedModules.count("extension")) {
+                    ApplyExtension(jsmd.js);
+                    successCount++;
                 }
 
                 if (!isAll) {
@@ -11483,9 +11474,9 @@ namespace cjs {
 
             return returnValue.get(1);
         }
-        static JSValue global_using(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue global_use(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount > 2) {
-                JS_ThrowTypeError(ctx, "[using] Only 1 or 2 argument are supported: (object, where?)");
+                JS_ThrowTypeError(ctx, "[use] Only 1 or 2 argument are supported: (object, where?)");
                 return JS_EXCEPTION;
             }
 
@@ -11495,11 +11486,11 @@ namespace cjs {
             JSV object = JSV(ctx, jsObject);
 
             if (!JS_IsObject(jsObject)) {
-                JS_ThrowTypeError(ctx, "[using] The first argument must be a object");
+                JS_ThrowTypeError(ctx, "[use] The first argument must be a object");
                 return JS_EXCEPTION;
             }
             if (IsSameValue(ctx, global, object)) {
-                JS_ThrowTypeError(ctx, "[using] The first object cannot be equal to the global object");
+                JS_ThrowTypeError(ctx, "[use] The first object cannot be equal to the global object");
                 return JS_EXCEPTION;
             }
 
@@ -11509,20 +11500,20 @@ namespace cjs {
             if (argumentCount >= 2) {
                 jsWhere = argumentValues[1];
                 if (!JS_IsObject(jsWhere) && !JS_IsString(jsWhere)) {
-                    JS_ThrowTypeError(ctx, "[using] The second argument must be a object or string");
+                    JS_ThrowTypeError(ctx, "[use] The second argument must be a object or string");
                     return JS_EXCEPTION;
                 }
                 if (JS_IsString(jsWhere)) {
                     JSV tempVWhere = jsWhere;
                     if (!ReadJSValueAsString(ctx, tempVWhere, sWhere)) {
-                        JS_ThrowTypeError(ctx, "[using] The second argument must be a valid string");
+                        JS_ThrowTypeError(ctx, "[use] The second argument must be a valid string");
                         return JS_EXCEPTION;
                     }
                     isString = true;
                     jsWhere = JS_UNDEFINED;
                 }
                 if (JS_IsObject(jsWhere) && IsSameValue(ctx, JSV(ctx, jsWhere), JSV(ctx, jsObject))) {
-                    JS_ThrowTypeError(ctx, "[using] The first object cannot be equal to the second object");
+                    JS_ThrowTypeError(ctx, "[use] The first object cannot be equal to the second object");
                     return JS_EXCEPTION;
                 }
             }
@@ -11538,11 +11529,7 @@ namespace cjs {
             }
 
             bool ret = ForEach(ctx, object, [&](JSV& vKey, JSV& vValue) {
-                std::string key = "";
-                if (!JS_IsString(vKey.get(0)) || !ReadJSValueAsString(ctx, vKey, key)) {
-                    return;
-                }
-                SetAttribute(ctx, where, key, vValue);
+                SetAttribute(ctx, where, vKey, vValue);
                 });
 
             return JS_NewBool(ctx, ret);
@@ -11901,75 +11888,7 @@ namespace cjs {
             return JS_EXCEPTION;
         }
         static JSValue system_help(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
-            constexpr uint64_t totalPage = 1;
-            uint64_t page = 1;
-            if (argumentCount > 0) {
-                JSV js_page = JSV(ctx, &argumentValues[0]).cset(1).cget(1);
-                ReadJSValueAsUint64(ctx, js_page, page);
-            }
-            std::string help = "";
-            if (page == 1) {
-                help = R"(
-CGI.JS内置API使用帮助文档(v1.0.20260727.01)(第 )" + std::to_string(page) + R"( 页 / 共 )" + std::to_string(totalPage) + R"( 页)(属性说明顺序: 说明(子属性)，函数说明顺序：功能；参数；返回值；行为):
-注意: 本API文档中省略并简写了对行为"传入参数类型或数量的不匹配则抛出类型错误(如果函数不额外抛出错误，则简写为'不抛出错误') "的描述，因为此行为针对任意有参数函数都会触发。
-window:
-    include(...moduleName: string):void: 加载模块；(...moduleName: string)模块名称，即全局对象中或其他对象中的属性名称加特定前缀，内置模块写法为'cjs:[模块名称]'，关键字直接写'all'，'extension'；无返回值；不抛出错误。
-    await(promise: Promise):void: 保持阻塞等待直到Promise的状态被更改；(promise: Promise)要等待的Promise对象；在Promise被解决时会返回其结果；行为与浏览器中的await关键字一致，若Promise被拒绝则会抛出错误并将Promise拒绝的结果作为错误原因，注意：如果Promise不被解决或拒绝，则此函数会永远保持阻塞状态。
-    eval(code):any: 执行代码字符串；(code)要执行的代码；返回最后一次执行成功代码的返回值；与浏览器一致，传入非字符串类型原样返回，代码存在错误抛出。
-    using(namespace: object[, where: object]):boolean: 将指定对象的所有属性复写到指定位置；(namespace: object)要被复写的对象，(where: object)要复写的目标对象，默认为全局对象；返回操作状态。
-    wait(milliseconds: number):void: 阻塞等待指定的时间(毫秒)，由于受到系统时钟精度的影响，实际等待实际可能存在10毫秒以内的波动；(milliseconds: number)指定的时间，仅可为正整数或0；无返回值；数据不正确抛出类型错误。
-    this_close():void: 此方法仅在子上下文的全局对象即通过script.execute(...)函数创建并返回的全局对象中可用，关闭当前上下文并该上下文的清空全局对象；无参数；无返回值；重复关闭抛出类型错误。
-system: 
-    help([page: number]):void: 显示当前界面；([page])可选页码，默认为1；无返回值；传入错误页码无输出，不抛出错误。
-    exit():void: 结束当前上下文，在交互式模式下主上下文被结束后会退出程序；无参数；无返回值；在底层出错时抛出内部错误。
-    updateConfig(config: object):void: 更新底层配置；(config: object)配置对象；无返回值；不抛出错误。
-    saveConfig():boolean: 保存底层配置到文件；无参数；返回操作状态；不抛出错误。
-    cwd():string: 返回当前执行脚本的工作目录；无参数；成功返回目录(以'/'为分隔符，末尾带'/')，失败返回可执行文件所在目录；不抛出错误。
-    ecwd():string: 返回当前可执行文件所在目录；无参数；返回目录(以'/'为分隔符，末尾带'/')；不抛出错误。
-    execute(cmd: string):object: 在新的命令提示符中执行一段命令；(cmd: string)要执行的cmd命令；返回操作对象，包含(isSuccess: boolean)操作状态，(exitCode: uint64)退出码，(output: string)所有输出结果。
-    config:object: 配置对象。
-    config:object: 配置对象。
-script:
-    include(...path: string[]):void: 引入一个或多个本地js文件，支持绝对路径与相对路径，正斜杠分隔符与反斜杠分隔符，相对路径基于脚本执行目录(在交互式模式下为可执行文件所在目录)(下同)；(...path: string[])剩余路径，允许一次传入多个本地路径；无返回值；在文件任意文件不存在或任意文件读取失败时抛出内部错误，在任意引入文件存在错误时中断后续引入并抛出默认错误。
-    execute([path: string]):object: 引入一个本地js文件，支持类型同上include(...)函数；([path: string])可选路径；返回新上下文的全局对象；在未传参时会直接返回新上下文的全局对象，在上下文创建失败或在传参且目标文件不存在或读取失败时抛出内部错误，在引入的文件存在错误时中断引入并抛出默认错误，返回值为未初始化。
-console:
-    log([...data]):void: 在控制台输出任意类型的数据；([...data])可选的剩余数据，允许一次输出多个数据，输出时将使用','分隔；无返回值；和浏览器一致，不抛出错误。
-    pause():void: 仅在控制台交互式模式下生效，暂停控制台输入流，注意：操作有1ms延迟，仅同步生效；无参数；无返回值；重复暂停不抛出错误。
-    resume():void: 仅在控制台交互式模式下生效，恢复控制台输入流，注意：操作有1ms延迟，仅同步生效；无参数；无返回值；重复继续不抛出错误。
-    hide():void: 隐藏控制台，注意：部分操作系统上会被处理为最小化；无参数；无返回值；不抛出错误。
-    show():void: 恢复已隐藏控制台；无参数；无返回值；不抛出错误。
-    kill():void: 关闭已有的控制台，这不会导致程序退出，注意：仅在文件执行模式下可用；无参数；无返回值；不抛出错误。
-    restore([title: string]):void: 恢复已关闭的控制台，这不会导致程序有多个控制台，注意：仅在文件执行模式下可用；([title: string])可选控制台窗口标题；无返回值；不抛出错误。
-    input([forwarder: string, defaultValue: string, isHideInputValue: boolean]):void: 要求输入内容，此操作将同步阻塞执行，注意：仅在控制台或文件执行模式下可用；([forwarder: string])可选前置提示词，([defaultValue: string])可选默认值(不会显示在输入框中)，([isHideInputValue: boolean])可选隐藏输入内容，适用于密码输入等场景；无返回值；不抛出错误。
-filesystem:
-    open(path: string[, mode: string]):object: 打开一个文件；(path: string)路径，在读模式下文件必须存在，([mode: string])模式；返回文件操作对象；行为与Python3+一致。
-    exists(path: string):boolean: 检查一个文件是否存在；(path: string)路径；返回存在状况；不抛出错误。
-    count(path: string):uint64: 返回一个目录下所有文件、文件夹的数量(不包括本身)；(path: string)路径；返回数量；在路径不为目录或不存在时抛出类型错误。
-    remove(path: string):uint64: 删除一个文件或文件夹；(path: string)路径；返回删除数量(如果删除文件夹，则还包括文件夹本身以及所有子文件或文件夹)；文件或文件夹不存在返回类型错误。
-    list(path: string):object: 列出一个目录下的所有文件和文件夹；(path: string)路径；返回对象键为路径值为文件名或文件夹名；在路径不为目录或不存在时抛出类型错误。
-crypto: 标准Web Crypto API。
-bytebuffer:
-    readAsJson(data: Uint8Array):Promise<object>: 异步将二进制字节数据解析为JSON对象；(data: Uint8Array)要解析的二进制字节数据；返回Promise对象，解决时返回解析后的JSON对象，拒绝时返回语法错误；解析JSON失败时抛出语法错误，参数类型不匹配抛出类型错误。
-    readAsFormData(data: Uint8Array):Promise<FormData>: 异步将二进制字节数据转换为FormData对象；(data: Uint8Array)要转换的二进制字节数据；返回Promise对象，解决时返回FormData对象，拒绝时返回对应错误；创建FormData失败时抛出内部错误，参数类型不匹配抛出类型错误。
-    readAsString(data: Uint8Array):Promise<string>: 异步将二进制字节数据转换为字符串；(data: Uint8Array)要转换的二进制字节数据；返回Promise对象，解决时返回转换后的字符串；参数类型不匹配抛出类型错误，不额外抛出错误。
-    decodeBase91(data: string[, isUrlEncoding: boolean]):Promise<Uint8Array>: 异步将Base91编码字符串解码为二进制字节数据；(data: string)Base91编码字符串，([isUrlEncoding: boolean])是否为URL安全编码，默认为false；返回Promise对象，解决时返回Uint8Array类型二进制数据，拒绝时返回内部错误；解码失败抛出内部错误，第二个参数非布尔值抛出类型错误。
-    decodeBase85(data: string):Promise<Uint8Array>: 异步将Base85编码字符串解码为二进制字节数据；(data: string)Base85编码字符串；返回Promise对象，解决时返回Uint8Array类型二进制数据，拒绝时返回内部错误；解码失败抛出内部错误，参数类型不匹配抛出类型错误。
-    decodeBase64(data: string[, isUrlEncoding: boolean]):Promise<Uint8Array>: 异步将Base64编码字符串解码为二进制字节数据；(data: string)Base64编码字符串，([isUrlEncoding: boolean])是否为URL安全编码，默认为false；返回Promise对象，解决时返回Uint8Array类型二进制数据，拒绝时返回内部错误；解码失败抛出内部错误，第二个参数非布尔值抛出类型错误。
-    decodeBase62(data: string):Promise<Uint8Array>: 异步将Base62编码字符串解码为二进制字节数据；(data: string)Base62编码字符串；返回Promise对象，解决时返回Uint8Array类型二进制数据，拒绝时返回内部错误；解码失败抛出内部错误，参数类型不匹配抛出类型错误。
-    decodeBase58(data: string):Promise<Uint8Array>: 异步将Base58编码字符串解码为二进制字节数据；(data: string)Base58编码字符串；返回Promise对象，解决时返回Uint8Array类型二进制数据，拒绝时返回内部错误；解码失败抛出内部错误，参数类型不匹配抛出类型错误。
-    decodeBase32(data: string):Promise<Uint8Array>: 异步将Base32编码字符串解码为二进制字节数据；(data: string)Base32编码字符串；返回Promise对象，解决时返回Uint8Array类型二进制数据，拒绝时返回内部错误；解码失败抛出内部错误，参数类型不匹配抛出类型错误。
-    decodeBase16(data: string):Promise<Uint8Array>: 异步将Base16编码字符串解码为二进制字节数据；(data: string)Base16编码字符串；返回Promise对象，解决时返回Uint8Array类型二进制数据，拒绝时返回内部错误；解码失败抛出内部错误，参数类型不匹配抛出类型错误。
-    encodeBase91(data: Uint8Array[, isUrlEncoding: boolean]):Promise<string>: 异步将二进制字节数据编码为Base91字符串；(data: Uint8Array)要编码的二进制字节数据，([isUrlEncoding: boolean])是否使用URL安全编码，默认为false；返回Promise对象，解决时返回Base91编码字符串，拒绝时返回内部错误；编码失败抛出内部错误，第二个参数非布尔值抛出类型错误。
-    encodeBase85(data: Uint8Array):Promise<string>: 异步将二进制字节数据编码为Base85字符串；(data: Uint8Array)要编码的二进制字节数据；返回Promise对象，解决时返回Base85编码字符串，拒绝时返回内部错误；编码失败抛出内部错误，参数类型不匹配抛出类型错误。
-    encodeBase64(data: Uint8Array[, isUrlEncoding: boolean]):Promise<string>: 异步将二进制字节数据编码为Base64字符串；(data: Uint8Array)要编码的二进制字节数据，([isUrlEncoding: boolean])是否使用URL安全编码，默认为false；返回Promise对象，解决时返回Base64编码字符串，拒绝时返回内部错误；编码失败抛出内部错误，第二个参数非布尔值抛出类型错误。
-    encodeBase62(data: Uint8Array):Promise<string>: 异步将二进制字节数据编码为Base62字符串；(data: Uint8Array)要编码的二进制字节数据；返回Promise对象，解决时返回Base62编码字符串，拒绝时返回内部错误；编码失败抛出内部错误，参数类型不匹配抛出类型错误。
-    encodeBase58(data: Uint8Array):Promise<string>: 异步将二进制字节数据编码为Base58字符串；(data: Uint8Array)要编码的二进制字节数据；返回Promise对象，解决时返回Base58编码字符串，拒绝时返回内部错误；编码失败抛出内部错误，参数类型不匹配抛出类型错误。
-    encodeBase32(data: Uint8Array):Promise<string>: 异步将二进制字节数据编码为Base32字符串；(data: Uint8Array)要编码的二进制字节数据；返回Promise对象，解决时返回Base32编码字符串，拒绝时返回内部错误；编码失败抛出内部错误，参数类型不匹配抛出类型错误。
-    encodeBase16(data: Uint8Array):Promise<string>: 异步将二进制字节数据编码为Base16字符串；(data: Uint8Array)要编码的二进制字节数据；返回Promise对象，解决时返回Base16编码字符串，拒绝时返回内部错误；编码失败抛出内部错误，参数类型不匹配抛出类型错误。
-    toBinary(data: any):Promise<Uint8Array>: 异步将任意支持类型的数据转换为Uint8Array二进制字节数据；(data: any)要转换的数据；返回Promise对象，解决时返回Uint8Array类型二进制数据；参数类型不支持时抛出类型错误，不额外抛出错误。
-    toString(data: Uint8Array):Promise<string>: 异步将二进制字节数据转换为字符串；(data: Uint8Array)要转换的二进制字节数据；返回Promise对象，解决时返回转换后的字符串；参数类型不匹配抛出类型错误，不额外抛出错误。
-            )";
-            }
+            std::string help = R"(访问 'https://github.com/Aliyuan0812/CGI.JS/blob/master/docs/api-reference.md' 获取更多帮助。)";
             return NewString(ctx, help).get(1);
         }
 
@@ -17224,7 +17143,7 @@ bytebuffer:
         }
         static JSV NewArrayBuffer(JSContext* ctx, const BYTEBUFFER& vec) {
             if (vec.empty()) {
-                JSValue emptyBuffer = JS_NewArrayBuffer(ctx, nullptr, 0, nullptr, nullptr, false);
+                JSValue emptyBuffer = JS_NewArrayBuffer(ctx, nullptr, 0, 0, nullptr, nullptr, false);
                 return JSV(ctx, &emptyBuffer).cset(1);
             }
 
@@ -17240,10 +17159,13 @@ bytebuffer:
                 ctx,
                 buf,
                 dataLen,
-                [](JSRuntime* rt, void* opaque, void* data) {
-                    if (data != nullptr) {
-                        free(data);
+                dataLen,
+                [](JSRuntime* rt, void* opaque, void* ptr, size_t size) -> void* {
+                    if (size == 0) {
+                        free(ptr);
+                        return nullptr;
                     }
+                    return nullptr;
                 },
                 nullptr,
                 false
@@ -17541,10 +17463,12 @@ bytebuffer:
                 ctx,
                 buf,
                 dataLen,
-                [](JSRuntime* rt, void* opaque, void* data) {
-                    if (data != nullptr) {
-                        free(data);
+                [](JSRuntime* rt, void* opaque, void* ptr, size_t size) -> void* {
+                    if (size == 0) {
+                        free(ptr);
+                        return nullptr;
                     }
+                    return nullptr;
                 },
                 nullptr,
                 false
