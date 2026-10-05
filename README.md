@@ -7,7 +7,7 @@
 [![Platform](https://img.shields.io/badge/platform-Windows-blue)](https://github.com/Ah-Yuanah/CGI.JS)
 
 
-> ⭐ 喜欢这个项目欢迎 Star \\\\\\\& Watch，感谢支持！
+> ⭐ 喜欢这个项目欢迎 Star \& Watch，感谢支持！
 
 ### **简介**
 
@@ -57,6 +57,7 @@ cjs.exe script.cjs
 
 ### **更新日志**
 
+* 发布版本v3.1.20261005.01: 升级内核至0.17.0版本。
 * 发布版本v3.0.20261004.01: 升级内核至0.16.2版本，重磅支持ES2026 Stage4特性，修复一系列历史性问题，全量重写帮助文档。
 
 
