@@ -57,6 +57,7 @@ cjs.exe script.cjs
 
 ### **更新日志**
 
+* 发布版本v3.2.20261017.01: 对 ```filesystem.open```、```script.execute```、```network.http.open``` 的返回值加入ES显式资源管理的 ```using``` 支持，修复参考文档的部分注明错误，升级 ```console.log``` 的输出性能、格式，修改 ```filesystem.count```、```filesystem.remove``` 的返回值由 **BigInt** 至 **Number**，修复一系列已知Bugs。
 * 发布版本v3.1.20261005.01: 升级内核至0.17.0版本。
 * 发布版本v3.0.20261004.01: 升级内核至0.16.2版本，重磅支持ES2026 Stage4特性，修复一系列历史性问题，全量重写帮助文档。
 

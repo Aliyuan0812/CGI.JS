@@ -414,7 +414,8 @@ namespace cjs {
         {L"White",        L"#FFFFFF"},
         {L"Date",         L"#7FE5FF"},
         {L"Array",        L"#77FFFF"},
-        {L"Object",       L"#80C8FF"}
+        {L"Object",       L"#80C8FF"},
+        {L"Note",         L"#ADADAD"}
     };
     std::wstring GetColorValue(const std::wstring& key) {
         auto it = TextLightColorValue.find(key);
@@ -3454,113 +3455,6 @@ namespace cjs {
         int r = 0, g = 0, b = 0;
     };
 
-    WORD ParseColor(const std::wstring& fgColor = L"#cccccc", const std::wstring& bgColor = L"#0c0c0c") {
-        auto hex2rgb = [](const std::wstring& hex, bool isBackground = false) -> RGBColor {
-            RGBColor rgb;
-            if (hex.size() != 7 || hex[0] != L'#') {
-                return isBackground ? RGBColor{ 12, 12, 12 } : RGBColor{ 204, 204, 204 };
-            }
-
-            wchar_t* endPtr = nullptr;
-            unsigned long rUL = std::wcstoul(hex.substr(1, 2).c_str(), &endPtr, 16);
-            if (endPtr == hex.substr(1, 2).c_str()) return isBackground ? RGBColor{ 12,12,12 } : RGBColor{ 204,204,204 };
-            unsigned long gUL = std::wcstoul(hex.substr(3, 2).c_str(), &endPtr, 16);
-            if (endPtr == hex.substr(3, 2).c_str()) return isBackground ? RGBColor{ 12,12,12 } : RGBColor{ 204,204,204 };
-            unsigned long bUL = std::wcstoul(hex.substr(5, 2).c_str(), &endPtr, 16);
-            if (endPtr == hex.substr(5, 2).c_str()) return isBackground ? RGBColor{ 12,12,12 } : RGBColor{ 204,204,204 };
-            rgb.r = static_cast<int>(rUL & 0xFF);
-            rgb.g = static_cast<int>(gUL & 0xFF);
-            rgb.b = static_cast<int>(bUL & 0xFF);
-            return rgb;
-            };
-
-        RGBColor fgRgb = hex2rgb(fgColor, false);
-        RGBColor bgRgb = hex2rgb(bgColor, true);
-
-        if (isWTConsole) {
-            return 0x0F;
-        }
-
-        const RGBColor console16[16] = {
-            {0,     0,     0},
-            {0,     0,     128},
-            {0,     128,   0},
-            {0,     128,   128},
-            {128,   0,     0},
-            {128,   0,     128},
-            {128,   128,   0},
-            {192,   192,   192},
-            {128,   128,   128},
-            {0,     0,     255},
-            {0,     255,   0},
-            {0,     255,   255},
-            {255,   0,     0},
-            {255,   0,     255},
-            {255,   255,   0},
-            {255,   255,   255}
-        };
-
-        auto rgbDist = [](const RGBColor& c1, const RGBColor& c2) -> double {
-            int dr = c1.r - c2.r;
-            int dg = c1.g - c2.g;
-            int db = c1.b - c2.b;
-            return std::sqrt(0.299 * dr * dr + 0.587 * dg * dg + 0.114 * db * db);
-            };
-
-        int fgIdx = 7;
-        double minFgDist = 1e9;
-        for (int i = 0; i < 16; i++) {
-            double dist = rgbDist(fgRgb, console16[i]);
-            if (dist < minFgDist) {
-                minFgDist = dist;
-                fgIdx = i;
-            }
-        }
-
-
-
-        auto getSaturation = [](const RGBColor& rgb) -> double {
-            int maxVal = std::max({ rgb.r, rgb.g, rgb.b });
-            int minVal = std::min({ rgb.r, rgb.g, rgb.b });
-            if (maxVal == minVal) return 0.0;
-            double l = (maxVal + minVal) / 2.0 / 255.0;
-            double s = (maxVal - minVal) / 255.0 / (1 - std::abs(2 * l - 1));
-            return s;
-            };
-
-
-
-
-        double saturation = getSaturation(fgRgb);
-        const double SATURATION_THRESHOLD = 0.2;
-        const double DISTANCE_THRESHOLD = 100.0;
-
-        if (saturation < SATURATION_THRESHOLD && minFgDist > DISTANCE_THRESHOLD) {
-
-            int gray = (fgRgb.r * 299 + fgRgb.g * 587 + fgRgb.b * 114) / 1000;
-            if (gray <= 40) fgIdx = 0;
-            else if (gray <= 120) fgIdx = 8;
-            else if (gray <= 200) fgIdx = 7;
-            else fgIdx = 15;
-        }
-
-        int bgIdx = 0;
-        double minBgDist = 1e9;
-        for (int i = 0; i < 16; i++) {
-            double dist = rgbDist(bgRgb, console16[i]);
-            if (dist < minBgDist) {
-                minBgDist = dist;
-                bgIdx = i;
-            }
-        }
-
-        WORD finalAttr = (static_cast<WORD>(bgIdx) << 4) | static_cast<WORD>(fgIdx);
-
-        if (finalAttr == 0) finalAttr = 0x08;
-
-        return finalAttr;
-    }
-
     uint64_t wcout(const std::string& str) {
         HANDLE hConsoleOut = GetStdHandle(STD_OUTPUT_HANDLE);
         if (hConsoleOut == INVALID_HANDLE_VALUE) {
@@ -3617,6 +3511,100 @@ namespace cjs {
         CloseHandle(hConsole);
     }
 
+    WORD ParseColor(const std::wstring& fgColor = L"#cccccc", const std::wstring& bgColor = L"#0c0c0c") {
+        auto hex2rgb = [](const std::wstring& hex, bool isBackground = false) -> RGBColor {
+            RGBColor rgb;
+            if (hex.size() != 7 || hex[0] != L'#') {
+                return isBackground ? RGBColor{ 12, 12, 12 } : RGBColor{ 204, 204, 204 };
+            }
+            wchar_t* endPtr = nullptr;
+            unsigned long rUL = std::wcstoul(hex.substr(1, 2).c_str(), &endPtr, 16);
+            if (endPtr == hex.substr(1, 2).c_str()) return isBackground ? RGBColor{ 12,12,12 } : RGBColor{ 204,204,204 };
+            unsigned long gUL = std::wcstoul(hex.substr(3, 2).c_str(), &endPtr, 16);
+            if (endPtr == hex.substr(3, 2).c_str()) return isBackground ? RGBColor{ 12,12,12 } : RGBColor{ 204,204,204 };
+            unsigned long bUL = std::wcstoul(hex.substr(5, 2).c_str(), &endPtr, 16);
+            if (endPtr == hex.substr(5, 2).c_str()) return isBackground ? RGBColor{ 12,12,12 } : RGBColor{ 204,204,204 };
+            rgb.r = static_cast<int>(rUL & 0xFF);
+            rgb.g = static_cast<int>(gUL & 0xFF);
+            rgb.b = static_cast<int>(bUL & 0xFF);
+            return rgb;
+            };
+
+        RGBColor fgRgb = hex2rgb(fgColor, false);
+        RGBColor bgRgb = hex2rgb(bgColor, true);
+
+        const RGBColor console16[16] = {
+            {0,     0,     0},
+            {0,     0,     128},
+            {0,     128,   0},
+            {0,     128,   128},
+            {128,   0,     0},
+            {128,   0,     128},
+            {128,   128,   0},
+            {192,   192,   192},
+            {128,   128,   128},
+            {0,     0,     255},
+            {0,     255,   0},
+            {0,     255,   255},
+            {255,   0,     0},
+            {255,   0,     255},
+            {255,   255,   0},
+            {255,   255,   255}
+        };
+
+        auto rgbDist = [](const RGBColor& c1, const RGBColor& c2) -> double {
+            int dr = c1.r - c2.r;
+            int dg = c1.g - c2.g;
+            int db = c1.b - c2.b;
+            return 0.299 * dr * dr + 0.587 * dg * dg + 0.114 * db * db;
+            };
+
+        int fgIdx = 7;
+        double minFgDist = 1e18;
+        for (int i = 0; i < 16; i++) {
+            double dist = rgbDist(fgRgb, console16[i]);
+            if (dist < minFgDist) {
+                minFgDist = dist;
+                fgIdx = i;
+            }
+        }
+
+        auto getSaturation = [](const RGBColor& rgb) -> double {
+            int maxVal = std::max({ rgb.r, rgb.g, rgb.b });
+            int minVal = std::min({ rgb.r, rgb.g, rgb.b });
+            if (maxVal == minVal) return 0.0;
+            double l = (maxVal + minVal) / 2.0 / 255.0;
+            double s = (maxVal - minVal) / 255.0 / (1 - std::abs(2 * l - 1));
+            return s;
+            };
+
+        double saturation = getSaturation(fgRgb);
+        const double SATURATION_THRESHOLD = 0.2;
+        const double DISTANCE_THRESHOLD = 100.0 * 100.0;
+
+        if (saturation < SATURATION_THRESHOLD && minFgDist > DISTANCE_THRESHOLD) {
+            int gray = (fgRgb.r * 299 + fgRgb.g * 587 + fgRgb.b * 114) / 1000;
+            if (gray <= 40) fgIdx = 0;
+            else if (gray <= 120) fgIdx = 8;
+            else if (gray <= 200) fgIdx = 7;
+            else fgIdx = 15;
+        }
+
+        int bgIdx = 0;
+        double minBgDist = 1e18;
+        for (int i = 0; i < 16; i++) {
+            double dist = rgbDist(bgRgb, console16[i]);
+            if (dist < minBgDist) {
+                minBgDist = dist;
+                bgIdx = i;
+            }
+        }
+
+        WORD finalAttr = (static_cast<WORD>(bgIdx) << 4) | static_cast<WORD>(fgIdx);
+        if (finalAttr == 0) finalAttr = 0x08;
+        return finalAttr;
+    }
+
     void CreateOutput(const std::wstring& outputData, const std::wstring& fgColor = L"", const std::wstring& bgColor = L"") {
         if (!isConsoleEnv) {
             outputTemp[outputData] = fgColor;
@@ -3636,12 +3624,17 @@ namespace cjs {
                 bg.g = static_cast<int>(std::wcstol(bgColor.substr(3, 2).c_str(), &end, 16));
                 bg.b = static_cast<int>(std::wcstol(bgColor.substr(5, 2).c_str(), &end, 16));
             }
-            std::wstring ansi = L"\x1b[38;2;" + std::to_wstring(fg.r) + L";" + std::to_wstring(fg.g) + L";" + std::to_wstring(fg.b) + L"m"
-                + L"\x1b[48;2;" + std::to_wstring(bg.r) + L";" + std::to_wstring(bg.g) + L";" + std::to_wstring(bg.b) + L"m";
-            wcout(ansi); wcout(outputData); wcout(L"\x1b[0m");
+            std::wstring ansi = L"\x1b[38;2;" + std::to_wstring(fg.r) + L";" + std::to_wstring(fg.g) + L";" + std::to_wstring(fg.b) + L"m" + L"\x1b[48;2;" + std::to_wstring(bg.r) + L";" + std::to_wstring(bg.g) + L";" + std::to_wstring(bg.b) + L"m";
+            wcout(ansi);
+            wcout(outputData);
+            wcout(L"\x1b[0m");
         }
         else {
-            CreateOutput(outputData, ParseColor(fgColor, bgColor));
+            WORD attr = ParseColor(fgColor.empty() ? L"#cccccc" : fgColor, bgColor.empty() ? L"#0c0c0c" : bgColor);
+            HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+            SetConsoleTextAttribute(hConsole, attr);
+            wcout(outputData);
+            SetConsoleTextAttribute(hConsole, 0x0F);
         }
     }
 
@@ -3651,7 +3644,7 @@ namespace cjs {
 
     void OutputStack(std::vector<std::wstring>& Instack) {
         if (Instack.empty()) return;
-        CreateOutput(L"@Stack: \n", GetColorValue(L"DarkGray"));
+        CreateOutput(L"@Stack: \n", GetColorValue(L"Gray"));
         ULL stackIndex = 0;
         for (const std::wstring& stack : Instack) {
             stackIndex += 4;
@@ -9000,12 +8993,12 @@ namespace cjs {
 
                 JSMData* jsmdPtr = nullptr;
                 if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                    return NewUint64(ctx, 0).get(1);
+                    return NewNumber(ctx, 0).get(1);
                 }
                 JSMData& jsmd = *jsmdPtr;
 
                 if ((jsmdPtr->isAutoLoadModules == false && (configObject[L"general"]["isModuleMode"].isBool() && configObject[L"general"]["isModuleMode"].get<bool>() == false))) {
-                    return NewUint64(ctx, 0).get(1);
+                    return NewNumber(ctx, 0).get(1);
                 }
 
                 JSV global = NewGlobalObject(ctx);
@@ -10016,8 +10009,7 @@ namespace cjs {
                 JSV js_id = GetProperty(ctx, thisVal, "id");
                 ULL id = 0;
                 if (!ReadJSValueAsUint64(ctx, js_id, id) || !jsmdPtr->networkHttpList.count(id) || jsmdPtr->networkHttpList[id] == nullptr) {
-                    JS_ThrowInternalError(ctx, "[network.http.open->close] This instance has been closed already");
-                    return JS_EXCEPTION;
+                    return JS_UNDEFINED;
                 }
 
                 jsmdPtr->networkHttpList[id]->release();
@@ -10026,6 +10018,10 @@ namespace cjs {
 
                 return JS_UNDEFINED;
                 });
+            SetAttribute(ctx, returnValue, GetProperty(ctx, NewGlobalObject(ctx), {
+                {"Symbol"},
+                {"dispose"}
+                }), GetProperty(ctx, returnValue, "close"));
 
             return returnValue.get(1);
         }
@@ -11683,8 +11679,7 @@ namespace cjs {
 
                 JSMData* jsmdPtr = nullptr;
                 if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr || jsmdPtr->parentCtx == nullptr) {
-                    JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                    return JS_EXCEPTION;
+                    return JS_UNDEFINED;
                 }
 
                 JSMData* parentJsmdPtr = nullptr;
@@ -11708,6 +11703,10 @@ namespace cjs {
 
                 return JS_UNDEFINED;
                 }, 0);
+            SetAttribute(ctx, global, GetProperty(ctx, NewGlobalObject(ctx), {
+                {"Symbol"},
+                {"dispose"}
+                }), GetProperty(newCtx, global, "this_close"));
 
             return global.get(1);
         }
@@ -15064,468 +15063,545 @@ namespace cjs {
             return JS_UNDEFINED;
         }
         static JSValue console_log(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
-            const uint32_t JS_GPN_ALL = JS_GPN_STRING_MASK | JS_GPN_SYMBOL_MASK | JS_GPN_SET_ENUM;
             std::unordered_set<uint64_t> visited_objs;
 
-            JSAtom atom_toStringTag = JS_NewAtom(ctx, "Symbol.toStringTag");
-            JSAtom atom_name = JS_NewAtom(ctx, "name");
-            JSAtom atom_toString = JS_NewAtom(ctx, "toString");
-            JSAtom atom_length = JS_NewAtom(ctx, "length");
-            JSAtom atom_buffer = JS_NewAtom(ctx, "buffer");
-            JSAtom atom_byteOffset = JS_NewAtom(ctx, "byteOffset");
-            JSAtom atom_state = JS_NewAtom(ctx, "state");
-            JSAtom atom__isPrivate = JS_NewAtom(ctx, "_isPrivate");
-            JSAtom atom_byteLength = JS_NewAtom(ctx, "byteLength");
-            JSAtom atom_toLocaleString = JS_NewAtom(ctx, "toLocaleString");
-            JSAtom atom_constructor = JS_NewAtom(ctx, "constructor");
-            JSAtom atom_prototype = JS_NewAtom(ctx, "prototype");
-            JSAtom atom_internal = JS_NewAtom(ctx, "internal");
-            JSAtom atom_id = JS_NewAtom(ctx, "id");
+            struct Atom {
+                JSContext* ctx;
+                JSAtom a;
+                Atom(JSContext* c, const char* s) : ctx(c), a(JS_NewAtom(c, s)) {}
+                ~Atom() { if (a != JS_ATOM_NULL) JS_FreeAtom(ctx, a); }
+                operator JSAtom() const { return a; }
+            };
 
-            auto get_color_value = [&](const std::wstring& color_key) -> const std::wstring& {
-                auto it = TextLightColorValue.find(color_key);
+            Atom A_toStringTag{ ctx, "Symbol.toStringTag" };
+            Atom A_name{ ctx, "name" };
+            Atom A_toString{ ctx, "toString" };
+            Atom A_length{ ctx, "length" };
+            Atom A_buffer{ ctx, "buffer" };
+            Atom A_byteOffset{ ctx, "byteOffset" };
+            Atom A__isPrivate{ ctx, "_isPrivate" };
+            Atom A_byteLength{ ctx, "byteLength" };
+            Atom A_toLocaleString{ ctx, "toLocaleString" };
+            Atom A_constructor{ ctx, "constructor" };
+            Atom A_prototype{ ctx, "prototype" };
+            Atom A_message{ ctx, "message" };
+
+            JSValue global_obj = JS_GetGlobalObject(ctx);
+            JSValue sym_obj = JS_GetPropertyStr(ctx, global_obj, "Symbol");
+            JSValue tts_sym = JS_UNDEFINED;
+            if (!JS_IsException(sym_obj) && !JS_IsUndefined(sym_obj) && !JS_IsNull(sym_obj))
+                tts_sym = JS_GetPropertyStr(ctx, sym_obj, "toStringTag");
+
+            JSValue obj_ctor = JS_GetPropertyStr(ctx, global_obj, "Object");
+            JSValue obj_proto = JS_GetPropertyStr(ctx, obj_ctor, "prototype");
+            JSValue obj_toString = JS_GetPropertyStr(ctx, obj_proto, "toString");
+
+            JSAtom tts_atom = JS_ATOM_NULL;
+            if (!JS_IsUndefined(tts_sym) && !JS_IsException(tts_sym))
+                tts_atom = JS_ValueToAtom(ctx, tts_sym);
+
+            auto color = [&](const std::wstring& key) -> const std::wstring& {
+                auto it = TextLightColorValue.find(key);
                 if (it != TextLightColorValue.end()) return it->second;
-                static std::wstring default_color = TextLightColorValue[L"Default"];
-                return default_color;
+                static const std::wstring def = TextLightColorValue[L"Default"];
+                return def;
                 };
 
-            auto js_val_to_string = [&](JSValueConst val) -> std::string {
-                if (JS_IsUndefined(val) || JS_IsNull(val) || JS_IsException(val)) return "";
-                JSValue str_val = JS_ToString(ctx, val);
-                if (JS_IsException(str_val)) {
-                    JS_FreeValue(ctx, str_val);
+            const std::wstring& cObject = color(L"Object");
+            const std::wstring& cNote = color(L"Note");
+            const std::wstring& cNumber = color(L"Number");
+            const std::wstring& cComment = color(L"Comment");
+            const std::wstring& cNull = color(L"NullUndefined");
+
+            auto to_str = [&](JSValueConst v) -> std::string {
+                if (JS_IsUndefined(v) || JS_IsNull(v) || JS_IsException(v)) return "";
+                JSValue s = JS_ToString(ctx, v);
+                if (JS_IsException(s)) { JS_FreeValue(ctx, s); return ""; }
+                const char* c = JS_ToCString(ctx, s);
+                std::string r;
+                if (c) { r = c; JS_FreeCString(ctx, c); }
+                JS_FreeValue(ctx, s);
+                return r;
+                };
+
+            static const std::wstring indents[24] = {
+                L"", L"  ", L"    ", L"      ", L"        ", L"          ",
+                L"            ", L"              ", L"                ", L"                  ",
+                L"                    ", L"                      ", L"                        ",
+                L"                          ", L"                            ", L"                              ",
+                L"                                ", L"                                  ", L"                                    ",
+                L"                                      ", L"                                        ", L"                                          ",
+                L"                                            ", L"                                              "
+            };
+            auto indent = [](int n) -> const std::wstring& {
+                if (n < 0) n = 0;
+                if (n < 24) return indents[n];
+                static std::unordered_map<int, std::wstring> overflow;
+                auto it = overflow.find(n);
+                if (it != overflow.end()) return it->second;
+                return overflow.emplace(n, std::wstring(n * 2, L' ')).first->second;
+                };
+
+            auto is_private = [&](JSValueConst v) -> bool {
+                if (!JS_IsObject(v)) return false;
+                JSValue p = JS_GetProperty(ctx, v, A__isPrivate);
+                bool r = false;
+                if (!JS_IsException(p) && !JS_IsUndefined(p) && !JS_IsNull(p))
+                    r = JS_ToBool(ctx, p);
+                JS_FreeValue(ctx, p);
+                return r;
+                };
+
+            auto call_to_string = [&](JSValueConst v) -> std::string {
+                JSValue fn = JS_GetProperty(ctx, v, A_toString);
+                if (JS_IsUndefined(fn) || JS_IsNull(fn) || JS_IsException(fn)) {
+                    JS_FreeValue(ctx, fn);
                     return "";
                 }
-                std::string result;
-                const char* cstr = JS_ToCString(ctx, str_val);
-                if (cstr) {
-                    result = cstr;
-                    JS_FreeCString(ctx, cstr);
-                }
-                JS_FreeValue(ctx, str_val);
-                return result;
+                JSValue r = JS_Call(ctx, fn, v, 0, nullptr);
+                JS_FreeValue(ctx, fn);
+                if (JS_IsException(r)) { JS_FreeValue(ctx, r); return ""; }
+                std::string s = to_str(r);
+                JS_FreeValue(ctx, r);
+                return s;
                 };
 
-            auto get_to_string_tag = [&](JSValueConst val) -> std::string {
-                if (atom_toStringTag != JS_ATOM_NULL) {
-                    JSValue tag_val = JS_GetProperty(ctx, val, atom_toStringTag);
-                    if (!JS_IsUndefined(tag_val) && !JS_IsNull(tag_val) && !JS_IsException(tag_val)) {
-                        std::string tag_str = js_val_to_string(tag_val);
-                        if (!tag_str.empty()) {
-                            JS_FreeValue(ctx, tag_val);
-                            return tag_str;
-                        }
-                    }
-                    JS_FreeValue(ctx, tag_val);
-                }
-
-                if (JS_IsObject(val)) {
-                    JSValue length_val = JS_GetProperty(ctx, val, atom_length);
-                    bool has_valid_length = !JS_IsUndefined(length_val) && !JS_IsNull(length_val) && !JS_IsException(length_val);
-                    JS_FreeValue(ctx, length_val);
-
-                    if (has_valid_length) {
-                        JSValue constructor_val = JS_GetProperty(ctx, val, atom_constructor);
-                        if (!JS_IsUndefined(constructor_val) && !JS_IsNull(constructor_val) && !JS_IsException(constructor_val)) {
-                            JSValue name_val = JS_GetProperty(ctx, constructor_val, atom_name);
-                            std::string constructor_name = js_val_to_string(name_val);
-                            if (constructor_name == "Array") {
-                                JS_FreeValue(ctx, name_val);
-                                JS_FreeValue(ctx, constructor_val);
-                                return constructor_name;
-                            }
-                            JS_FreeValue(ctx, name_val);
-                        }
-                        JS_FreeValue(ctx, constructor_val);
-
-                        JSValue array_js_str = JS_NewString(ctx, "Array");
-                        if (!JS_IsException(array_js_str)) {
-                            std::string array_cstr = js_val_to_string(array_js_str);
-                            if (!array_cstr.empty()) {
-                                JSValue proto_val = JS_GetProperty(ctx, val, atom_prototype);
-                                JSValue proto_name_val = JS_GetProperty(ctx, proto_val, atom_name);
-                                std::string proto_name = js_val_to_string(proto_name_val);
-                                bool is_real_array = (proto_name == "Array");
-                                JS_FreeValue(ctx, proto_name_val);
-                                JS_FreeValue(ctx, proto_val);
-                                if (is_real_array) return array_cstr;
-                            }
-                            JS_FreeValue(ctx, array_js_str);
-                        }
-                    }
-
-                    JSValue buffer_val = JS_GetProperty(ctx, val, atom_buffer);
-                    JSValue byteOffset_val = JS_GetProperty(ctx, val, atom_byteOffset);
-                    JSValue byteLength_val = JS_GetProperty(ctx, val, atom_byteLength);
-                    bool is_typed_array = !JS_IsUndefined(buffer_val) && !JS_IsNull(buffer_val)
-                        && !JS_IsUndefined(byteOffset_val) && !JS_IsNull(byteOffset_val)
-                        && !JS_IsUndefined(byteLength_val) && !JS_IsNull(byteLength_val);
-                    JS_FreeValue(ctx, buffer_val);
-                    JS_FreeValue(ctx, byteOffset_val);
-                    JS_FreeValue(ctx, byteLength_val);
-
-                    if (is_typed_array) {
-                        JSValue constructor_val = JS_GetProperty(ctx, val, atom_constructor);
-                        if (!JS_IsUndefined(constructor_val) && !JS_IsNull(constructor_val) && !JS_IsException(constructor_val)) {
-                            JSValue name_val = JS_GetProperty(ctx, constructor_val, atom_name);
-                            std::string constructor_name = js_val_to_string(name_val);
-                            if (!constructor_name.empty()) {
-                                JS_FreeValue(ctx, name_val);
-                                JS_FreeValue(ctx, constructor_val);
-                                return constructor_name;
-                            }
-                            JS_FreeValue(ctx, name_val);
-                        }
-                        JS_FreeValue(ctx, constructor_val);
-                    }
-                }
-
-                return GetSymbolName(ctx, val);
+            auto prop_str = [&](JSValueConst obj, JSAtom atom) -> std::string {
+                JSValue v = JS_GetProperty(ctx, obj, atom);
+                std::string s = to_str(v);
+                JS_FreeValue(ctx, v);
+                return s;
                 };
 
-            auto get_function_type = [&](JSValueConst val) -> std::wstring {
-                if (!JS_IsFunction(ctx, val)) return L"";
-                bool is_class = false;
-                JSValue name_val = JS_GetProperty(ctx, val, atom_name);
-                std::string func_name = js_val_to_string(name_val);
-                if (func_name.find("class ") != std::string::npos) is_class = true;
-                JS_FreeValue(ctx, name_val);
-
-                if (!is_class) {
-                    JSValue to_str_fun = JS_GetProperty(ctx, val, atom_toString);
-                    if (!JS_IsUndefined(to_str_fun) && !JS_IsNull(to_str_fun) && !JS_IsException(to_str_fun)) {
-                        JSValue str_val = JS_Call(ctx, to_str_fun, val, 0, nullptr);
-                        JS_FreeValue(ctx, to_str_fun);
-                        if (!JS_IsException(str_val)) {
-                            std::string fn_to_str = js_val_to_string(str_val);
-                            if (fn_to_str.find("class ") != std::string::npos) is_class = true;
-                        }
-                        JS_FreeValue(ctx, str_val);
-                    }
-                    else JS_FreeValue(ctx, to_str_fun);
+            auto ctor_name = [&](JSValueConst v) -> std::string {
+                JSValue c = JS_GetProperty(ctx, v, A_constructor);
+                if (JS_IsUndefined(c) || JS_IsNull(c) || JS_IsException(c)) {
+                    JS_FreeValue(ctx, c);
+                    return "";
                 }
-
-                if (is_class) return L"Class";
-                JSValue to_str_fun = JS_GetProperty(ctx, val, atom_toString);
-                std::wstring func_type = L"Function";
-                if (!JS_IsUndefined(to_str_fun) && !JS_IsNull(to_str_fun) && !JS_IsException(to_str_fun)) {
-                    JSValue str_val = JS_Call(ctx, to_str_fun, val, 0, nullptr);
-                    JS_FreeValue(ctx, to_str_fun);
-                    if (!JS_IsException(str_val)) {
-                        std::string fn_to_str = js_val_to_string(str_val);
-                        if (fn_to_str.find("[native code]") != std::string::npos) func_type = L"BuiltInFunction";
-                    }
-                    JS_FreeValue(ctx, str_val);
-                }
-                else JS_FreeValue(ctx, to_str_fun);
-
-                JSValue name_val2 = JS_GetProperty(ctx, val, atom_name);
-                std::string func_name2 = js_val_to_string(name_val2);
-                if (func_name2.find('.') != std::string::npos) func_type = L"Method";
-                JS_FreeValue(ctx, name_val2);
-                return func_type;
+                std::string n = prop_str(c, A_name);
+                JS_FreeValue(ctx, c);
+                return n;
                 };
 
-            auto get_indent_str = [&](int indent) -> std::wstring {
-                static std::unordered_map<int, std::wstring> indent_cache;
-                if (indent <= 0) return L"";
-                if (indent_cache.count(indent)) return indent_cache[indent];
-                std::wstring indent_str(indent * 2, L' ');
-                indent_cache[indent] = indent_str;
-                return indent_str;
+            auto class_tag = [&](JSValueConst v) -> std::string {
+                if (JS_IsUndefined(obj_toString) || JS_IsException(obj_toString)) return "";
+                JSValue r = JS_Call(ctx, obj_toString, v, 0, nullptr);
+                if (JS_IsException(r)) { JS_FreeValue(ctx, r); return ""; }
+                std::string s = to_str(r);
+                JS_FreeValue(ctx, r);
+                if (s.size() > 9 && s.compare(0, 8, "[object ") == 0 && s.back() == ']')
+                    return s.substr(8, s.size() - 9);
+                return "";
                 };
 
-            auto is_continuous_number_keys = [&](JSPropertyEnum* props, uint32_t prop_cnt) -> bool {
-                if (prop_cnt == 0) return false;
-                uint32_t max_key = 0;
-                std::unordered_set<uint32_t> key_set;
-                for (uint32_t i = 0; i < prop_cnt; i++) {
-                    std::string prop_name = js_val_to_string(JS_AtomToString(ctx, props[i].atom));
-                    if (prop_name.empty()) return false;
-                    char* endptr = nullptr;
-                    uint32_t num_key = strtoul(prop_name.c_str(), &endptr, 10);
-                    if (*endptr != '\0') return false;
-                    key_set.insert(num_key);
-                    if (num_key > max_key) max_key = num_key;
+            auto get_tag = [&](JSValueConst v) -> std::string {
+                JSValue tag = JS_GetProperty(ctx, v, A_toStringTag);
+                if (!JS_IsUndefined(tag) && !JS_IsNull(tag) && !JS_IsException(tag)) {
+                    std::string s = to_str(tag);
+                    JS_FreeValue(ctx, tag);
+                    if (!s.empty()) return s;
                 }
-                return (max_key + 1 == prop_cnt) && (key_set.size() == prop_cnt);
-                };
+                JS_FreeValue(ctx, tag);
+                if (!JS_IsObject(v)) return GetSymbolName(ctx, v);
+                std::string ct = class_tag(v);
+                if (!ct.empty()) return ct;
 
-            auto is_private_value = [&](JSValueConst val) -> bool {
-                if (!JS_IsObject(val)) return false;
-                JSValue private_val = JS_GetProperty(ctx, val, atom__isPrivate);
-                bool is_private = false;
-                if (!JS_IsException(private_val) && !JS_IsUndefined(private_val) && !JS_IsNull(private_val)) {
-                    is_private = JS_ToBool(ctx, private_val);
+                JSValue len = JS_GetProperty(ctx, v, A_length);
+                bool has_len = !JS_IsUndefined(len) && !JS_IsNull(len) && !JS_IsException(len);
+                JS_FreeValue(ctx, len);
+                if (has_len) {
+                    std::string cn = ctor_name(v);
+                    if (cn == "Array" || !cn.empty()) return cn;
                 }
-                JS_FreeValue(ctx, private_val);
-                return is_private;
+
+                JSValue buf = JS_GetProperty(ctx, v, A_buffer);
+                bool has_buf = !JS_IsUndefined(buf) && !JS_IsNull(buf) && !JS_IsException(buf);
+                JS_FreeValue(ctx, buf);
+                if (has_buf) {
+                    std::string cn = ctor_name(v);
+                    if (!cn.empty()) return cn;
+                }
+                return GetSymbolName(ctx, v);
                 };
 
-            std::function<void(JSValueConst, int)> print_js_value = [&](JSValueConst val, int indent) -> void {
-                if (is_private_value(val)) return;
-                std::wstring indent_str = get_indent_str(indent);
+            auto is_ta = [](const std::string& t) -> bool {
+                return t == "Uint8Array" || t == "Uint8ClampedArray" || t == "Uint16Array" || t == "Uint32Array"
+                    || t == "Int8Array" || t == "Int16Array" || t == "Int32Array"
+                    || t == "Float32Array" || t == "Float64Array"
+                    || t == "BigInt64Array" || t == "BigUint64Array";
+                };
 
-                if (JS_IsFunction(ctx, val)) {
-                    std::wstring func_type = get_function_type(val);
-                    JSValue name_val = JS_GetProperty(ctx, val, atom_name);
-                    std::string fn_name = js_val_to_string(name_val);
-                    JS_FreeValue(ctx, name_val);
+            auto is_err = [](const std::string& t) -> bool {
+                return t == "Error" || t == "EvalError" || t == "RangeError" || t == "ReferenceError"
+                    || t == "SyntaxError" || t == "TypeError" || t == "URIError" || t == "AggregateError";
+                };
 
-                    JSValue to_str_fun = JS_GetProperty(ctx, val, atom_toString);
-                    std::string fn_to_str;
-                    if (!JS_IsUndefined(to_str_fun) && !JS_IsNull(to_str_fun) && !JS_IsException(to_str_fun)) {
-                        JSValue str_val = JS_Call(ctx, to_str_fun, val, 0, nullptr);
-                        JS_FreeValue(ctx, to_str_fun);
-                        if (!JS_IsException(str_val)) fn_to_str = js_val_to_string(str_val);
-                        JS_FreeValue(ctx, str_val);
-                    }
-                    else JS_FreeValue(ctx, to_str_fun);
+            auto is_iter = [](const std::string& t) -> bool {
+                const std::string suf = " Iterator";
+                return t.size() > suf.size() && t.compare(t.size() - suf.size(), suf.size(), suf) == 0;
+                };
 
-                    std::wstring func_str;
-                    if (!fn_to_str.empty()) {
-                        func_str = stringToWstring(fn_to_str);
-                        std::wstring line_indent = get_indent_str(indent);
-                        size_t pos = 0;
-                        while ((pos = func_str.find(L'\n', pos)) != std::wstring::npos) {
-                            func_str.insert(pos + 1, line_indent);
-                            pos += line_indent.length() + 1;
-                        }
+            auto is_boxed_no_proto = [](const std::string& t) -> bool {
+                return t == "global" || t == "Global"
+                    || t == "Math" || t == "JSON" || t == "Reflect"
+                    || t == "Atomics" || t == "Intl" || t == "Console"
+                    || t == "globalThis" || t == "Window" || t == "WorkerGlobalScope";
+                };
+
+            auto is_numeric_key = [](const std::string& k) -> bool {
+                if (k.empty()) return false;
+                for (char c : k) if (c < '0' || c > '9') return false;
+                return true;
+                };
+
+            auto is_prototype_object = [&](JSValueConst v) -> std::string {
+                if (!JS_IsObject(v)) return "";
+                JSValue ctor = JS_GetProperty(ctx, v, A_constructor);
+                if (JS_IsUndefined(ctor) || JS_IsNull(ctor) || JS_IsException(ctor)) {
+                    JS_FreeValue(ctx, ctor);
+                    return "";
+                }
+                JSValue proto_of_ctor = JS_GetProperty(ctx, ctor, A_prototype);
+                bool eq = JS_IsStrictEqual(ctx, proto_of_ctor, v);
+                std::string cn;
+                if (eq) cn = prop_str(ctor, A_name);
+                JS_FreeValue(ctx, proto_of_ctor);
+                JS_FreeValue(ctx, ctor);
+                return eq ? cn : "";
+                };
+
+            auto proto_is_trivial = [&](JSValueConst proto) -> bool {
+                JSPropertyEnum* pp = nullptr;
+                uint32_t pc = 0;
+                static const uint32_t kFlags = JS_GPN_STRING_MASK | JS_GPN_SYMBOL_MASK;
+                if (JS_GetOwnPropertyNames(ctx, &pp, &pc, proto, kFlags) != 0) return true;
+                bool useful = false;
+                for (uint32_t i = 0; i < pc; ++i) {
+                    if (pp[i].atom != tts_atom) { useful = true; break; }
+                }
+                JS_FreePropertyEnum(ctx, pp, pc);
+                return !useful;
+                };
+
+            struct PropEntry {
+                std::string name;
+                JSValue val;
+            };
+
+            auto print_js_value = [&](auto&& self, JSValueConst v, int depth) -> void {
+                if (JS_IsString(v)) {
+                    CreateOutput(L"\"" + stringToWstring(to_str(v)) + L"\"", color(L"String"));
+                    return;
+                }
+                if (JS_IsNumber(v)) {
+                    double d = 0.0;
+                    if (JS_ToFloat64(ctx, &d, v) == 0) {
+                        std::wstringstream wss;
+                        wss << std::setprecision(17) << d;
+                        CreateOutput(RemoveSpaceAfterNumber(wss.str()), cNumber);
                     }
                     else {
-                        if (func_type == L"Class") func_str = fn_name.empty() ? L"class { [native code] }"
-                            : L"class " + stringToWstring(fn_name) + L" { [native code] }";
-                        else func_str = fn_name.empty() ? L"function() { [native code] }"
-                            : L"function " + stringToWstring(fn_name) + L"() { [native code] }";
+                        CreateOutput(L"[invalid number]", cComment);
                     }
-                    CreateOutput(func_str, get_color_value(func_type));
+                    return;
+                }
+                if (JS_IsBigInt(v)) {
+                    int64_t s64 = 0; uint64_t u64 = 0;
+                    if (JS_ToBigInt64(ctx, &s64, v) == 0) CreateOutput(std::to_wstring(s64), cNumber);
+                    else if (JS_ToBigUint64(ctx, &u64, v) == 0) CreateOutput(std::to_wstring(u64), cNumber);
+                    else CreateOutput(L"[invalid bigint]", cComment);
+                    return;
+                }
+                if (JS_IsBool(v)) {
+                    CreateOutput(JS_ToBool(ctx, v) ? L"true" : L"false", color(L"Boolean"));
+                    return;
+                }
+                if (JS_IsNull(v)) { CreateOutput(L"null", cNull); return; }
+                if (JS_IsUndefined(v)) { CreateOutput(L"undefined", cNull); return; }
+                if (JS_IsSymbol(v)) {
+                    CreateOutput(L"Symbol(" + stringToWstring(to_str(v)) + L")", color(L"Symbol"));
                     return;
                 }
 
-                if (JS_IsObject(val) || JS_IsArray(val)) {
-                    std::string tag_str = get_to_string_tag(val);
-                    std::wstring obj_color_key = L"Object";
+                if (is_private(v)) return;
 
-                    if (tag_str == "ArrayBuffer") {
-                        obj_color_key = L"Array";
-                        JSValue byteLength_val = JS_GetProperty(ctx, val, atom_byteLength);
-                        uint32_t byte_length = 0;
-                        JS_ToUint32(ctx, &byte_length, byteLength_val);
-                        JS_FreeValue(ctx, byteLength_val);
-                        CreateOutput(L"ArrayBuffer (" + std::to_wstring(byte_length) + L")", get_color_value(obj_color_key));
-                        return;
-                    }
+                if (JS_IsFunction(ctx, v)) {
+                    std::string name = prop_str(v, A_name);
+                    std::string body = call_to_string(v);
+                    std::wstring kind;
+                    if (name.find("class ") != std::string::npos || body.find("class ") != std::string::npos)
+                        kind = L"Class";
+                    else if (body.find("[native code]") != std::string::npos)
+                        kind = L"BuiltInFunction";
+                    else if (name.find('.') != std::string::npos)
+                        kind = L"Method";
+                    else
+                        kind = L"Function";
 
-                    if (tag_str == "Promise") {
-                        obj_color_key = L"Promise";
-                        CreateOutput(L"Promise {", get_color_value(obj_color_key));
-                        CreateOutput(L"\n", get_color_value(obj_color_key));
-
-                        JSMData* jsmdPtr = nullptr;
-                        std::wstring state_str = L"pending";
-                        std::wstring state_color = get_color_value(L"Info");
-                        bool isNeedFree = false;
-                        JSValue result_val = JS_UNDEFINED;
-                        JSPromiseStateEnum state = JS_PromiseState(ctx, val);
-                        if (state == JS_PROMISE_FULFILLED) {
-                            state_str = L"fulfilled";
-                            state_color = get_color_value(L"Success");
-                            result_val = JS_PromiseResult(ctx, val);
-                            isNeedFree = true;
+                    std::wstring out;
+                    const std::wstring& ind = indent(depth);
+                    if (!body.empty()) {
+                        out = stringToWstring(body);
+                        size_t pos = 0;
+                        while ((pos = out.find(L'\n', pos)) != std::wstring::npos) {
+                            out.insert(pos + 1, ind);
+                            pos += ind.length() + 1;
                         }
-                        else if (state == JS_PROMISE_REJECTED) {
-                            state_str = L"rejected";
-                            state_color = get_color_value(L"Error");
-                            result_val = JS_PromiseResult(ctx, val);
-                            isNeedFree = true;
-                        }
-
-                        CreateOutput(get_indent_str(indent + 1), get_color_value(obj_color_key));
-                        CreateOutput(L"[[PromiseState]]: <", get_color_value(L"Property"));
-                        CreateOutput(state_str, state_color);
-                        CreateOutput(L">", get_color_value(L"Property"));
-                        CreateOutput(L"\n", get_color_value(obj_color_key));
-
-                        CreateOutput(get_indent_str(indent + 1), get_color_value(obj_color_key));
-                        CreateOutput(L"[[PromiseResult]]: ", get_color_value(L"Property"));
-                        if (!is_private_value(result_val) && !JS_IsException(result_val)) print_js_value(result_val, indent + 1);
-                        else if (!is_private_value(result_val)) CreateOutput(L"[invalid]", get_color_value(L"Comment"));
-
-                        CreateOutput(L"\n", get_color_value(obj_color_key));
-                        CreateOutput(get_indent_str(indent) + L"}", get_color_value(obj_color_key));
-
-                        if (isNeedFree) JS_FreeValue(ctx, result_val);
-                        return;
                     }
-
-                    if (tag_str == "Date") {
-                        obj_color_key = L"Date";
-                        std::wstring date_str = L"Date ";
-                        JSValue locale_str_val = JS_GetProperty(ctx, val, atom_toLocaleString);
-                        if (!JS_IsException(locale_str_val) && !JS_IsUndefined(locale_str_val)) {
-                            JSValue str_val = JS_Call(ctx, locale_str_val, val, 0, nullptr);
-                            JS_FreeValue(ctx, locale_str_val);
-                            std::string date_cstr = js_val_to_string(str_val);
-                            if (!date_cstr.empty()) date_str += L"[" + stringToWstring(date_cstr) + L"]";
-                            else date_str += L"[Invalid Date]";
-                            JS_FreeValue(ctx, str_val);
-                        }
-                        else {
-                            JS_FreeValue(ctx, locale_str_val);
-                            date_str += L"[Invalid Date]";
-                        }
-                        CreateOutput(date_str, get_color_value(obj_color_key));
-                        return;
-                    }
-
-                    if (tag_str == "RegExp") {
-                        obj_color_key = L"RegExp";
-                        std::string regex_str = js_val_to_string(val);
-                        std::wstring regex_wstr = regex_str.empty() ? L"RegExp [invalid]" : stringToWstring(regex_str);
-                        CreateOutput(regex_wstr, get_color_value(obj_color_key));
-                        return;
-                    }
-
-                    if (tag_str == "Array" ||
-                        tag_str == "Uint8Array" || tag_str == "Uint16Array" || tag_str == "Uint32Array" ||
-                        tag_str == "Int8Array" || tag_str == "Int16Array" || tag_str == "Int32Array" ||
-                        tag_str == "Float32Array" || tag_str == "Float64Array") {
-                        obj_color_key = L"Array";
-                        JSValue length_val = JS_GetProperty(ctx, val, atom_length);
-                        uint32_t arr_length = 0;
-                        JS_ToUint32(ctx, &arr_length, length_val);
-                        JS_FreeValue(ctx, length_val);
-
-                        CreateOutput(stringToWstring(tag_str) + L" [", get_color_value(obj_color_key));
-                        for (uint32_t i = 0; i < arr_length; ++i) {
-                            JSValue elem_val = JS_GetPropertyUint32(ctx, val, i);
-                            if (i > 0) CreateOutput(L", ", get_color_value(obj_color_key));
-                            if (!is_private_value(elem_val) && !JS_IsException(elem_val)) print_js_value(elem_val, indent + 1);
-                            else if (!is_private_value(elem_val)) CreateOutput(L"[invalid]", get_color_value(L"Comment"));
-                            JS_FreeValue(ctx, elem_val);
-                        }
-                        CreateOutput(L"]", get_color_value(obj_color_key));
-                        return;
-                    }
-
-                    if (tag_str == "Module") {
-                        obj_color_key = L"Module";
-                        CreateOutput(indent_str + L"Module { ... }", get_color_value(obj_color_key));
-                        return;
-                    }
-                }
-
-                if (JS_IsString(val)) {
-                    std::string str_val = js_val_to_string(val);
-                    CreateOutput(L"\"" + stringToWstring(str_val) + L"\"", get_color_value(L"String"));
-                }
-                else if (JS_IsNumber(val)) {
-                    double num = 0.0;
-                    if (JS_ToFloat64(ctx, &num, val) == 0) {
-                        std::wstringstream wss;
-                        wss << std::setprecision(17) << num;
-                        std::wstring num_wstr = RemoveSpaceAfterNumber(wss.str());
-                        CreateOutput(num_wstr, get_color_value(L"Number"));
+                    else if (kind == L"Class") {
+                        out = name.empty() ? L"class { [native code] }"
+                            : L"class " + stringToWstring(name) + L" { [native code] }";
                     }
                     else {
-                        CreateOutput(L"[invalid number]", get_color_value(L"Comment"));
+                        out = name.empty() ? L"function() { [native code] }"
+                            : L"function " + stringToWstring(name) + L"() { [native code] }";
                     }
+                    CreateOutput(out, color(kind));
+                    return;
                 }
-                else if (JS_IsBigInt(val)) {
-                    int64_t bnum_signed = 0;
-                    uint64_t bnum_unsigned = 0;
-                    if (JS_ToBigInt64(ctx, &bnum_signed, val) == 0) CreateOutput(std::to_wstring(bnum_signed), get_color_value(L"Number"));
-                    else if (JS_ToBigUint64(ctx, &bnum_unsigned, val) == 0) CreateOutput(std::to_wstring(bnum_unsigned), get_color_value(L"Number"));
-                    else CreateOutput(L"[invalid bigint]", get_color_value(L"Comment"));
-                }
-                else if (JS_IsBool(val)) {
-                    bool b = JS_ToBool(ctx, val);
-                    CreateOutput(b ? L"true" : L"false", get_color_value(L"Boolean"));
-                }
-                else if (JS_IsNull(val)) CreateOutput(L"null", get_color_value(L"NullUndefined"));
-                else if (JS_IsUndefined(val)) CreateOutput(L"undefined", get_color_value(L"NullUndefined"));
-                else if (JS_IsSymbol(val)) {
-                    std::string symbol_str = js_val_to_string(val);
-                    CreateOutput(L"Symbol(" + stringToWstring(symbol_str) + L")", get_color_value(L"Symbol"));
-                }
-                else if (JS_IsObject(val)) {
-                    uint64_t obj_id = (uint64_t)JS_VALUE_GET_PTR(val);
-                    if (visited_objs.count(obj_id)) {
-                        CreateOutput(L"[Circular]", get_color_value(L"Comment"));
+
+                const std::wstring& ind = indent(depth);
+
+                if (JS_IsObject(v) || JS_IsArray(v)) {
+                    std::string proto_ctor = is_prototype_object(v);
+                    bool is_proto_obj = !proto_ctor.empty();
+
+                    std::string tag;
+                    if (!is_proto_obj) {
+                        tag = get_tag(v);
+
+                        if (tag == "ArrayBuffer" || tag == "SharedArrayBuffer" || tag == "DataView") {
+                            JSValue bl = JS_GetProperty(ctx, v, A_byteLength);
+                            uint32_t n = 0;
+                            if (!JS_IsUndefined(bl) && !JS_IsNull(bl)) JS_ToUint32(ctx, &n, bl);
+                            JS_FreeValue(ctx, bl);
+                            CreateOutput(stringToWstring(tag) + L" (" + std::to_wstring(n) + L")", color(L"Array"));
+                            return;
+                        }
+
+                        if (tag == "Promise") {
+                            const std::wstring& pc = color(L"Promise");
+                            CreateOutput(L"Promise {\n", pc);
+                            std::wstring state_str = L"pending";
+                            const std::wstring* sc = &color(L"Info");
+                            JSValue result = JS_UNDEFINED;
+                            bool nf = false;
+                            JSPromiseStateEnum st = JS_PromiseState(ctx, v);
+                            if (st == JS_PROMISE_FULFILLED) {
+                                state_str = L"fulfilled"; sc = &color(L"Success");
+                                result = JS_PromiseResult(ctx, v); nf = true;
+                            }
+                            else if (st == JS_PROMISE_REJECTED) {
+                                state_str = L"rejected"; sc = &color(L"Error");
+                                result = JS_PromiseResult(ctx, v); nf = true;
+                            }
+                            CreateOutput(indent(depth + 1), pc);
+                            CreateOutput(L"[[PromiseState]]: ", cNote);
+                            CreateOutput(state_str, *sc);
+                            CreateOutput(L"\n", pc);
+                            CreateOutput(indent(depth + 1), pc);
+                            CreateOutput(L"[[PromiseResult]]: ", cNote);
+                            if (!is_private(result) && !JS_IsException(result)) self(self, result, depth + 1);
+                            else if (!is_private(result)) CreateOutput(L"[invalid]", cComment);
+                            CreateOutput(L"\n", pc);
+                            CreateOutput(indent(depth) + L"}", pc);
+                            if (nf) JS_FreeValue(ctx, result);
+                            return;
+                        }
+
+                        if (tag == "Date") {
+                            std::wstring s = L"Date [";
+                            JSValue loc = JS_GetProperty(ctx, v, A_toLocaleString);
+                            if (!JS_IsException(loc) && !JS_IsUndefined(loc)) {
+                                JSValue r = JS_Call(ctx, loc, v, 0, nullptr);
+                                JS_FreeValue(ctx, loc);
+                                std::string cs = to_str(r);
+                                JS_FreeValue(ctx, r);
+                                s += cs.empty() ? L"Invalid Date" : stringToWstring(cs);
+                            }
+                            else {
+                                JS_FreeValue(ctx, loc);
+                                s += L"Invalid Date";
+                            }
+                            s += L"]";
+                            CreateOutput(s, color(L"Date"));
+                            return;
+                        }
+
+                        if (tag == "RegExp") {
+                            std::string rs = to_str(v);
+                            CreateOutput(rs.empty() ? L"RegExp [invalid]" : stringToWstring(rs), color(L"RegExp"));
+                            return;
+                        }
+
+                        if (tag == "Array" || is_ta(tag)) {
+                            JSValue lv = JS_GetProperty(ctx, v, A_length);
+                            uint32_t n = 0;
+                            JS_ToUint32(ctx, &n, lv);
+                            JS_FreeValue(ctx, lv);
+
+                            const std::wstring& ac = color(L"Array");
+                            CreateOutput(stringToWstring(tag) + L" {\n", ac);
+                            for (uint32_t i = 0; i < n; ++i) {
+                                JSValue e = JS_GetPropertyUint32(ctx, v, i);
+                                if (i > 0) CreateOutput(L",\n", ac);
+                                CreateOutput(indent(depth + 1), ac);
+                                CreateOutput(std::to_wstring(i), cNote);
+                                CreateOutput(L": ", ac);
+                                if (!JS_IsException(e)) self(self, e, depth + 1);
+                                else CreateOutput(L"undefined", cNull);
+                                JS_FreeValue(ctx, e);
+                            }
+                            if (n > 0) CreateOutput(L",\n", ac);
+                            CreateOutput(indent(depth + 1), ac);
+                            CreateOutput(L"length", cObject);
+                            CreateOutput(L": ", ac);
+                            CreateOutput(std::to_wstring(n), cNumber);
+                            CreateOutput(L"\n", ac);
+                            CreateOutput(indent(depth) + L"}", ac);
+                            return;
+                        }
+
+                        if (is_err(tag)) {
+                            std::string name = prop_str(v, A_name);
+                            std::string msg = prop_str(v, A_message);
+                            CreateOutput(stringToWstring(name.empty() ? tag : name) + L": " + stringToWstring(msg), color(L"Error"));
+                            return;
+                        }
+
+                        if (is_iter(tag)) {
+                            CreateOutput(stringToWstring(tag) + L" {}", color(L"Iterator"));
+                            return;
+                        }
+
+                        if (tag == "Module") {
+                            CreateOutput(ind + L"Module { ... }", color(L"Module"));
+                            return;
+                        }
+                    }
+
+                    uint64_t id = (uint64_t)JS_VALUE_GET_PTR(v);
+                    if (visited_objs.count(id)) {
+                        CreateOutput(L"[Circular]", cComment);
                         return;
                     }
-                    visited_objs.insert(obj_id);
+                    visited_objs.insert(id);
 
-                    JSValue val_copy = JS_DupValue(ctx, val);
-                    std::string proto_name_str = GetPrototypeName(ctx, val_copy);
-                    JS_FreeValue(ctx, val_copy);
-                    std::wstring obj_type_name = stringToWstring(proto_name_str);
+                    JSValue copy = JS_DupValue(ctx, v);
+                    std::wstring type_name = stringToWstring(GetPrototypeName(ctx, copy));
+                    JS_FreeValue(ctx, copy);
 
-                    std::wstring proto_color_key = L"Type";
-                    if (!obj_type_name.empty() && TextLightColorValue.count(obj_type_name)) proto_color_key = obj_type_name;
+                    std::wstring label;
+                    if (is_proto_obj) {
+                        label = proto_ctor.empty() ? L"Object" : (L"Object [" + stringToWstring(proto_ctor) + L"]");
+                    }
+                    else {
+                        label = type_name;
+                    }
 
-                    if (!obj_type_name.empty() && obj_type_name != L"Object") CreateOutput(obj_type_name + L" ", get_color_value(proto_color_key));
-                    CreateOutput(L"{\n", get_color_value(L"Object"));
+                    bool is_plain = label.empty() || label == L"Object" || label == L"Object []";
+                    bool no_proto = is_boxed_no_proto(tag) || label == L"Global" || label == L"global" || is_proto_obj;
 
+                    std::vector<PropEntry> keep;
                     JSPropertyEnum* props = nullptr;
-                    uint32_t prop_cnt = 0;
-                    std::vector<JSPropertyEnum> final_valid_props;
-                    if (JS_GetOwnPropertyNames(ctx, &props, &prop_cnt, val, JS_GPN_ALL) == 0) {
-                        for (uint32_t i = 0; i < prop_cnt; i++) {
-                            std::string prop_name = js_val_to_string(JS_AtomToString(ctx, props[i].atom));
-                            bool is_private_prop = (prop_name == "_isPrivate");
-                            JSValue prop_val = JS_GetProperty(ctx, val, props[i].atom);
-                            bool is_private_val = is_private_value(prop_val);
-                            if (!is_private_prop && !is_private_val) final_valid_props.push_back(props[i]);
-                            JS_FreeValue(ctx, prop_val);
+                    uint32_t cnt = 0;
+                    static const uint32_t kFlags = JS_GPN_STRING_MASK | JS_GPN_SYMBOL_MASK;
+                    if (JS_GetOwnPropertyNames(ctx, &props, &cnt, v, kFlags) == 0) {
+                        for (uint32_t i = 0; i < cnt; ++i) {
+                            std::string pn = to_str(JS_AtomToString(ctx, props[i].atom));
+                            if (pn == "_isPrivate") continue;
+                            JSValue pv = JS_GetProperty(ctx, v, props[i].atom);
+                            if (!is_private(pv)) keep.push_back({ std::move(pn), pv });
+                            else JS_FreeValue(ctx, pv);
                         }
-                        JS_FreePropertyEnum(ctx, props, prop_cnt);
+                        JS_FreePropertyEnum(ctx, props, cnt);
                     }
 
-                    size_t final_prop_size = final_valid_props.size();
-                    for (size_t i = 0; i < final_prop_size; i++) {
-                        JSAtom prop_atom = final_valid_props[i].atom;
-                        std::string prop_name = js_val_to_string(JS_AtomToString(ctx, prop_atom));
-                        if (!prop_name.empty()) {
-                            CreateOutput(get_indent_str(indent + 1), get_color_value(L"Object"));
-                            CreateOutput(stringToWstring(prop_name) + L": ", get_color_value(L"Property"));
-                            JSValue prop_val = JS_GetProperty(ctx, val, prop_atom);
-                            if (!JS_IsException(prop_val)) print_js_value(prop_val, indent + 1);
-                            else CreateOutput(L"[invalid value]", get_color_value(L"Comment"));
-                            JS_FreeValue(ctx, prop_val);
-                            if (i < final_prop_size - 1) CreateOutput(L",", get_color_value(L"Object"));
+                    std::wstring pk = L"Type";
+                    if (!label.empty() && TextLightColorValue.count(label)) pk = label;
+                    if (label.size() > 7 && label.compare(0, 7, L"Object ") == 0) pk = L"Type";
+
+                    bool show_proto = !is_plain && !no_proto;
+                    JSValue proto_val = JS_UNDEFINED;
+                    if (show_proto) {
+                        proto_val = JS_GetPrototype(ctx, v);
+                        if (JS_IsNull(proto_val) || JS_IsUndefined(proto_val) || JS_IsException(proto_val)
+                            || proto_is_trivial(proto_val)) {
+                            JS_FreeValue(ctx, proto_val);
+                            proto_val = JS_UNDEFINED;
+                            show_proto = false;
                         }
-                        CreateOutput(L"\n", get_color_value(L"Object"));
                     }
 
-                    CreateOutput(get_indent_str(indent) + L"}", get_color_value(L"Object"));
-                    visited_objs.erase(obj_id);
+                    bool has_content = !keep.empty() || show_proto;
+
+                    if (!label.empty() && label != L"Object")
+                        CreateOutput(label + L" ", color(pk));
+
+                    if (!has_content) {
+                        CreateOutput(L"{}", cObject);
+                        for (auto& e : keep) JS_FreeValue(ctx, e.val);
+                        visited_objs.erase(id);
+                        return;
+                    }
+
+                    CreateOutput(L"{\n", cObject);
+
+                    bool first = true;
+                    auto sep = [&]() {
+                        if (!first) CreateOutput(L",\n", cObject);
+                        first = false;
+                        };
+
+                    for (auto& e : keep) {
+                        if (e.name.empty()) continue;
+                        sep();
+                        if (is_numeric_key(e.name)) {
+                            CreateOutput(indent(depth + 1), cObject);
+                            CreateOutput(stringToWstring(e.name), cNumber);
+                            CreateOutput(L": ", cObject);
+                        }
+                        else {
+                            CreateOutput(indent(depth + 1) + stringToWstring(e.name) + L": ", cObject);
+                        }
+                        if (!JS_IsException(e.val)) self(self, e.val, depth + 1);
+                        else CreateOutput(L"[Getter]", cComment);
+                        JS_FreeValue(ctx, e.val);
+                    }
+
+                    if (show_proto) {
+                        sep();
+                        CreateOutput(indent(depth + 1) + L"[[Prototype]]: ", cNote);
+                        self(self, proto_val, depth + 1);
+                        JS_FreeValue(ctx, proto_val);
+                    }
+
+                    CreateOutput(L"\n", cObject);
+                    CreateOutput(indent(depth) + L"}", cObject);
+                    visited_objs.erase(id);
+                    return;
                 }
-                else CreateOutput(L"[unknown type]", get_color_value(L"Comment"));
+
+                CreateOutput(L"[unknown type]", cComment);
                 };
 
-            for (int i = 0; i < argumentCount; i++) {
-                if (JS_IsException(argumentValues[i])) CreateOutput(L"[exception]", get_color_value(L"Comment"));
-                else print_js_value(argumentValues[i], 0);
-                if (i < argumentCount - 1) CreateOutput(L" ", get_color_value(L"Object"));
+            for (int i = 0; i < argumentCount; ++i) {
+                if (JS_IsException(argumentValues[i]))
+                    CreateOutput(L"[exception]", cComment);
+                else
+                    print_js_value(print_js_value, argumentValues[i], 0);
+                if (i + 1 < argumentCount) CreateOutput(L" ", cObject);
             }
-            CreateOutput(L"\n", get_color_value(L"Object"));
+            CreateOutput(L"\n", cObject);
 
-            JS_FreeAtom(ctx, atom_toStringTag);
-            JS_FreeAtom(ctx, atom_name);
-            JS_FreeAtom(ctx, atom_toString);
-            JS_FreeAtom(ctx, atom_length);
-            JS_FreeAtom(ctx, atom_buffer);
-            JS_FreeAtom(ctx, atom_byteOffset);
-            JS_FreeAtom(ctx, atom_state);
-            JS_FreeAtom(ctx, atom__isPrivate);
-            JS_FreeAtom(ctx, atom_byteLength);
-            JS_FreeAtom(ctx, atom_toLocaleString);
-            JS_FreeAtom(ctx, atom_constructor);
-            JS_FreeAtom(ctx, atom_prototype);
-            JS_FreeAtom(ctx, atom_internal);
-            JS_FreeAtom(ctx, atom_id);
-
+            if (!JS_IsUndefined(tts_sym) && !JS_IsException(tts_sym)) JS_FreeValue(ctx, tts_sym);
+            if (!JS_IsUndefined(sym_obj) && !JS_IsException(sym_obj)) JS_FreeValue(ctx, sym_obj);
+            if (!JS_IsUndefined(obj_toString) && !JS_IsException(obj_toString)) JS_FreeValue(ctx, obj_toString);
+            if (!JS_IsUndefined(obj_proto) && !JS_IsException(obj_proto)) JS_FreeValue(ctx, obj_proto);
+            if (!JS_IsUndefined(obj_ctor) && !JS_IsException(obj_ctor)) JS_FreeValue(ctx, obj_ctor);
+            if (tts_atom != JS_ATOM_NULL) JS_FreeAtom(ctx, tts_atom);
+            JS_FreeValue(ctx, global_obj);
             return JS_UNDEFINED;
         }
         static JSValue console_clear(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -15563,7 +15639,6 @@ namespace cjs {
             std::wstring inputData = CreateInput(defaultValue, isHidden);
             return NewString(ctx, wstringToString(inputData)).get(1);
         }
-
 
         static JSValue filesystem_list(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount != 1) {
@@ -15604,7 +15679,7 @@ namespace cjs {
                 JS_ThrowTypeError(ctx, "[filesystem.count] The path must be a directory");
                 return JS_EXCEPTION;
             }
-            return JS_NewBigUint64(ctx, fc.count());
+            return JS_NewNumber(ctx, (double)fc.count());
         }
         static JSValue filesystem_remove(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount != 1) {
@@ -15618,7 +15693,7 @@ namespace cjs {
                 return JS_EXCEPTION;
             }
             FileController fc = FileController(stringToWstring(path), stringToWstring(GetCurrentWorkDirectory(ctx)));
-            return JS_NewBigUint64(ctx, fc.remove());
+            return JS_NewNumber(ctx, (double)fc.remove());
         }
         static JSValue filesystem_exists(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount != 1) {
@@ -15903,8 +15978,7 @@ namespace cjs {
                 bool isClosed = false;
                 ReadJSValueAsBool(ctx, jsClosedTemp, isClosed);
                 if (isClosed) {
-                    JS_ThrowTypeError(ctx, "[filesystem.open->close] File has been closed already, cannot call close repeatedly");
-                    return JS_EXCEPTION;
+                    return JS_UNDEFINED;
                 }
 
                 JSV jsId = GetProperty(ctx, vThisVal, "id");
@@ -16081,6 +16155,10 @@ namespace cjs {
 
                 return JS_UNDEFINED;
                 }, -1, 0);
+            SetAttribute(ctx, fileControllerObject, GetProperty(ctx, NewGlobalObject(ctx), {
+                {"Symbol"},
+                {"dispose"}
+                }), GetProperty(ctx, fileControllerObject, "close"));
 
             return fileControllerObject.get(1);
         }
