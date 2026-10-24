@@ -2,7 +2,7 @@
 
 #ifndef AY_CJS_CPP
 #define AY_CJS_CPP
-#define AY_CJS_CPP_VW std::wstring(L"3.2.20261017.01")
+#define AY_CJS_CPP_VW std::wstring(L"3.3.20261024.01")
 #define AY_CJS_CPP_VL []() -> std::wstring { \
     std::wstring s(AY_CJS_CPP_VW); \
     s.erase(std::remove(s.begin(), s.end(), L'.'), s.end()); \

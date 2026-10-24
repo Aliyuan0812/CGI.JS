@@ -1549,8 +1549,6 @@ namespace cjs {
         bool try_lock() const { return m_mutex.try_lock(); }
 
 
-
-
         mapped_type& operator[](const key_type& key) {
             std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             return m_map[key];
@@ -1746,7 +1744,6 @@ namespace cjs {
             auto it = m_map.find(key);
             return it != m_map.end() ? std::optional<mapped_type>(it->second) : std::nullopt;
         }
-
 
 
         map_type* getPtr() {
@@ -1953,12 +1950,10 @@ namespace cjs {
             }
 
             T* data() noexcept {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
                 return m_vector.data();
             }
 
             const T* data() const noexcept {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
                 return m_vector.data();
             }
 
@@ -2069,6 +2064,7 @@ namespace cjs {
                 }
                 return m_vector[pos];
             }
+
             vector_type* getPtr() {
                 return &m_vector;
             }
@@ -3217,25 +3213,15 @@ namespace cjs {
         int argc = 0;
         wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
 
-        if (!argv || argc <= 1) {
-            if (argv) LocalFree(argv);
-            return arg_map;
-        }
+        if (!argv) return arg_map;
 
         for (int i = 1; i < argc; ++i) {
             const wchar_t* arg_ptr = argv[i];
             if (!arg_ptr || !*arg_ptr) continue;
 
-            if (arg_ptr[0] != L'-') {
-                continue;
-            }
+            if (arg_ptr[0] != L'-') continue;
 
-            size_t key_start = 0;
-            if (arg_ptr[0] == L'-') {
-                if (arg_ptr[1] == L'-') key_start = 2;
-                else key_start = 1;
-            }
-
+            size_t key_start = (arg_ptr[1] == L'-') ? 2 : 1;
             const wchar_t* kv_ptr = arg_ptr + key_start;
             if (!kv_ptr || !*kv_ptr) continue;
 
@@ -3243,7 +3229,7 @@ namespace cjs {
             std::wstring key, value;
             if (equal_ptr) {
                 key = std::wstring(kv_ptr, equal_ptr - kv_ptr);
-                value = std::wstring(equal_ptr + 1);
+                value = equal_ptr + 1;
             }
             else {
                 key = kv_ptr;
@@ -6165,6 +6151,7 @@ namespace cjs {
         return result;
     }
 
+
     class JSVInst {
     public:
         JSVInst(JSValue* InJsv) {
@@ -6178,34 +6165,52 @@ namespace cjs {
         JSVInst(JSValue InJsv) {
             jsv = InJsv;
         }
-        ~JSVInst() {
-            jsv = { 0 };
+        ~JSVInst() = default;
+        JSValue get() const {
+            return jsv.load(std::memory_order_acquire);
         }
-        JSValue get() {
-            return jsv.load();
+        void add() const {
+            ULL old = refCount.load(std::memory_order_relaxed);
+            while (old < ULLONG_MAX) {
+                if (refCount.compare_exchange_weak(old, old + 1, std::memory_order_acq_rel)) return;
+            }
         }
-        void add() {
-            if (refCount.load() < ULLONG_MAX) refCount.fetch_add(1, std::memory_order_relaxed);
+        ULL remove() const {
+            ULL old = refCount.load(std::memory_order_acquire);
+            while (old > 0) {
+                if (refCount.compare_exchange_weak(old, old - 1, std::memory_order_acq_rel)) return old - 1;
+            }
+            return 0;
         }
-        void remove() {
-            if (refCount.load() > 0) refCount.fetch_sub(1, std::memory_order_acq_rel);
+        ULL read() const {
+            return refCount.load(std::memory_order_acquire);
         }
-        ULL read() {
-            return refCount.load();
+        void qjs_add(int ref = 1) const {
+            if (ref <= 0) return;
+            ULL addend = static_cast<ULL>(ref);
+            ULL old = qjsRefCount.load(std::memory_order_relaxed);
+            while (old < ULLONG_MAX && old + addend > old) {
+                if (qjsRefCount.compare_exchange_weak(old, old + addend, std::memory_order_acq_rel)) return;
+            }
         }
-        void qjs_add(int ref = 1) {
-            if (qjsRefCount.load() < ULLONG_MAX) qjsRefCount.fetch_add(static_cast<size_t>(ref), std::memory_order_relaxed);
+        void qjs_remove(int ref = 1) const {
+            if (ref <= 0) return;
+            ULL subtrahend = static_cast<ULL>(ref);
+            ULL old = qjsRefCount.load(std::memory_order_acquire);
+            while (old >= subtrahend) {
+                if (qjsRefCount.compare_exchange_weak(old, old - subtrahend, std::memory_order_acq_rel)) return;
+            }
         }
-        void qjs_remove(int ref = 1) {
-            if (qjsRefCount.load() > 0) qjsRefCount.fetch_sub(static_cast<size_t>(ref), std::memory_order_acq_rel);
+        ULL qjs_read() const {
+            return qjsRefCount.load(std::memory_order_acquire);
         }
-        ULL qjs_read() {
-            return qjsRefCount.load();
+        ULL qjs_take() const {
+            return qjsRefCount.exchange(0, std::memory_order_acq_rel);
         }
     private:
-        std::atomic<JSValue> jsv = {};
-        std::atomic<ULL> refCount = 0;
-        std::atomic<ULL> qjsRefCount = 0;
+        mutable std::atomic<JSValue> jsv = {};
+        mutable std::atomic<ULL> refCount = 0;
+        mutable std::atomic<ULL> qjsRefCount = 0;
     };
     class JSV {
     public:
@@ -6220,7 +6225,6 @@ namespace cjs {
             catch (...) {
                 throw std::runtime_error("[JSV] Failed to new.");
             }
-
             jsvi->add();
         }
         JSV(const JSV& other) {
@@ -6238,30 +6242,41 @@ namespace cjs {
         }
         JSV& operator=(const JSV& other) {
             if (this == &other || *this == other) return *this;
-
             if (this->jsvi == other.jsvi && this->ctx != other.ctx) {
                 return *this;
             }
-
-            this->update(this->jsvi, this->ctx);
-
-            other.jsvi->add();
+            JSVInst* oldInst = this->jsvi;
+            JSContext* oldCtx = this->ctx;
+            if (other.jsvi != nullptr) {
+                other.jsvi->add();
+            }
             this->jsvi = other.jsvi;
             this->ctx = other.ctx;
-
+            update(oldInst, oldCtx);
+            return *this;
+        }
+        JSV& operator=(JSV&& other) noexcept {
+            if (this == &other) return *this;
+            JSVInst* oldInst = this->jsvi;
+            JSContext* oldCtx = this->ctx;
+            this->jsvi = other.jsvi;
+            this->ctx = other.ctx;
+            other.jsvi = nullptr;
+            other.ctx = nullptr;
+            update(oldInst, oldCtx);
             return *this;
         }
         JSV& operator=(const JSValue& other) {
-
+            JSVInst* ni = nullptr;
             try {
-                jsvi = new JSVInst(other);
+                ni = new JSVInst(other);
             }
             catch (...) {
                 throw std::runtime_error("[JSV] Failed to new.");
             }
-
-            jsvi->add();
-
+            ni->add();
+            update(jsvi, ctx);
+            jsvi = ni;
             return *this;
         }
         bool operator==(const JSV& other) const {
@@ -6275,7 +6290,7 @@ namespace cjs {
                 throw std::runtime_error("[JSV] The 'JSValue* InJsv' cannot be nullptr.");
             }
             ctx = InCtx;
-            if (InJsvi == nullptr) {
+            if (InJsvi == nullptr || *InJsvi == nullptr) {
                 try {
                     jsvi = new JSVInst(InJsv);
                 }
@@ -6286,7 +6301,6 @@ namespace cjs {
             else {
                 jsvi = *InJsvi;
             }
-
             jsvi->add();
         }
         JSV(JSContext* InCtx, JSValue InJsv, JSVInst** InJsvi = nullptr) {
@@ -6294,7 +6308,7 @@ namespace cjs {
                 throw std::runtime_error("[JSV] The 'JSContext* InCtx' cannot be nullptr.");
             }
             ctx = InCtx;
-            if (InJsvi == nullptr) {
+            if (InJsvi == nullptr || *InJsvi == nullptr) {
                 try {
                     jsvi = new JSVInst(InJsv);
                 }
@@ -6305,7 +6319,6 @@ namespace cjs {
             else {
                 jsvi = *InJsvi;
             }
-
             jsvi->add();
         }
         JSV(JSValue* InJsv) {
@@ -6318,7 +6331,6 @@ namespace cjs {
             catch (...) {
                 throw std::runtime_error("[JSV] Failed to new.");
             }
-
             jsvi->add();
         }
         JSV(JSValue InJsv) {
@@ -6328,20 +6340,24 @@ namespace cjs {
             catch (...) {
                 throw std::runtime_error("[JSV] Failed to new.");
             }
-
             jsvi->add();
         }
         ~JSV() {
             update(jsvi, ctx);
         }
         ULL set(int strongRef = 0) {
+            if (jsvi == nullptr) return 0;
+            jsvi->add();
+            ULL r;
             if (strongRef != 0) {
                 if (strongRef > 0)
                     jsvi->qjs_add(strongRef);
                 else
                     jsvi->qjs_remove(-strongRef);
             }
-            return jsvi->qjs_read();
+            r = jsvi->qjs_read();
+            jsvi->remove();
+            return r;
         }
         JSV& cset(int strongRef = 0) {
             set(strongRef);
@@ -6349,44 +6365,64 @@ namespace cjs {
         }
         JSValue get(long long dupRef = 0) const {
             if (jsvi == nullptr) return JS_UNDEFINED;
-            if (dupRef > 0) {
-                for (long long i = 0; i < dupRef; i++) {
-
-                    if (ctx != nullptr && !JS_IsUndefined((jsvi->get())) && !JS_IsNull((jsvi->get()))) JS_DupValue(ctx, (jsvi->get()));
+            jsvi->add();
+            JSValue v = jsvi->get();
+            if (ctx != nullptr && !JS_IsUndefined(v) && !JS_IsNull(v)) {
+                if (dupRef > 0) {
+                    for (long long i = 0; i < dupRef; i++) {
+                        JS_DupValue(ctx, v);
+                    }
+                }
+                else if (dupRef < 0) {
+                    for (long long i = 0; i < -dupRef; i++) {
+                        JS_FreeValue(ctx, v);
+                    }
                 }
             }
-            else if (dupRef < 0) {
-                for (long long i = 0; i < -dupRef; i++) {
-
-                    if (ctx != nullptr && !JS_IsUndefined((jsvi->get())) && !JS_IsNull((jsvi->get()))) JS_FreeValue(ctx, (jsvi->get()));
-                }
-            }
-            return (jsvi->get());
+            jsvi->remove();
+            return v;
         }
         JSV& cget(long long dupRef = 0) {
-            if (jsvi == nullptr) return *this;
-            if (dupRef > 0) {
-                for (long long i = 0; i < dupRef; i++) {
-
-                    if (ctx != nullptr) JS_DupValue(ctx, (jsvi->get()));
+            if (jsvi == nullptr || ctx == nullptr) return *this;
+            jsvi->add();
+            JSValue v = jsvi->get();
+            if (!JS_IsUndefined(v) && !JS_IsNull(v)) {
+                if (dupRef > 0) {
+                    for (long long i = 0; i < dupRef; i++) {
+                        JS_DupValue(ctx, v);
+                    }
+                }
+                else if (dupRef < 0) {
+                    for (long long i = 0; i < -dupRef; i++) {
+                        JS_FreeValue(ctx, v);
+                    }
                 }
             }
-            else if (dupRef < 0) {
-                for (long long i = 0; i < -dupRef; i++) {
-
-                    if (ctx != nullptr) JS_FreeValue(ctx, (jsvi->get()));
-                }
-            }
+            jsvi->remove();
             return *this;
         }
         ULL tell() {
-            return jsvi->read();
+            if (jsvi == nullptr) return 0;
+            jsvi->add();
+            ULL r = jsvi->read();
+            jsvi->remove();
+            return r;
         }
         bool isAutoRelease() const {
-            return this->ctx != nullptr && this->jsvi != nullptr && !JS_IsUndefined((this->get())) && !JS_IsNull((this->get()));
+            if (this->ctx == nullptr || this->jsvi == nullptr) return false;
+            this->jsvi->add();
+            JSValue v = this->jsvi->get();
+            bool r = !JS_IsUndefined(v) && !JS_IsNull(v);
+            this->jsvi->remove();
+            return r;
         }
         bool isValid() const {
-            return this->jsvi != nullptr && !JS_IsUndefined((this->get())) && !JS_IsNull((this->get()));
+            if (this->jsvi == nullptr) return false;
+            this->jsvi->add();
+            JSValue v = this->jsvi->get();
+            bool r = !JS_IsUndefined(v) && !JS_IsNull(v);
+            this->jsvi->remove();
+            return r;
         }
         JSContext* getCtx() {
             return ctx;
@@ -6394,18 +6430,18 @@ namespace cjs {
     private:
         JSVInst* jsvi = nullptr;
         JSContext* ctx = nullptr;
-        void update(JSVInst* jsvi, JSContext* ctx) const {
-            if (jsvi != nullptr) {
-                jsvi->remove();
-                if (jsvi->read() == 0) {
-                    if (ctx != nullptr && !JS_IsUndefined((jsvi->get())) && !JS_IsNull((jsvi->get()))) {
-                        for (ULL i = 0; i < jsvi->qjs_read(); i++) {
-                            JS_FreeValue(ctx, (jsvi->get()));
-                        }
+        void update(JSVInst* inst, JSContext* c) const {
+            if (inst == nullptr) return;
+            ULL after = inst->remove();
+            if (after == 0) {
+                JSValue v = inst->get();
+                if (c != nullptr && !JS_IsUndefined(v) && !JS_IsNull(v)) {
+                    ULL qc = inst->qjs_take();
+                    for (ULL i = 0; i < qc; i++) {
+                        JS_FreeValue(c, v);
                     }
-                    delete jsvi;
                 }
-                jsvi = nullptr;
+                delete inst;
             }
         }
     };
@@ -6416,12 +6452,14 @@ namespace cjs {
             thread = std::move(t);
             handle = (HANDLE)thread.native_handle();
             HANDLE hProcess = GetCurrentProcess();
-            BOOL ret = DuplicateHandle(hProcess, handle, hProcess, &ownHandle, 0, FALSE, DUPLICATE_SAME_ACCESS);
-            if (ret == 0) ownHandle = NULL;
+            ownHandle = NULL;
+            if (handle != NULL && handle != INVALID_HANDLE_VALUE) {
+                DuplicateHandle(hProcess, handle, hProcess, &ownHandle, 0, FALSE, DUPLICATE_SAME_ACCESS);
+            }
         }
         ~ThreadInst() {
             HANDLE hThread = getHandle();
-            if (hThread != INVALID_HANDLE_VALUE) {
+            if (hThread != NULL && hThread != INVALID_HANDLE_VALUE) {
                 DWORD exitCode = 0;
                 if (GetExitCodeThread(hThread, &exitCode) && exitCode == STILL_ACTIVE) {
                     if (WaitForSingleObject(hThread, 1000) != WAIT_OBJECT_0) {
@@ -6430,21 +6468,27 @@ namespace cjs {
                 }
                 CloseHandle(hThread);
             }
+            ownHandle = NULL;
             if (thread.joinable()) {
                 thread.join();
             }
             thread = {};
         }
         uint64_t addRef() {
-            if (refCount.load(std::memory_order_acquire) == static_cast<uint64_t>(-1))
-                return static_cast<uint64_t>(-1);
-            return refCount.fetch_add(1, std::memory_order_acq_rel) + 1;
+            uint64_t old = refCount.load(std::memory_order_acquire);
+            while (old != static_cast<uint64_t>(-1)) {
+                if (refCount.compare_exchange_weak(old, old + 1, std::memory_order_acq_rel))
+                    return old + 1;
+            }
+            return static_cast<uint64_t>(-1);
         }
         uint64_t decRef() {
             uint64_t old = refCount.load(std::memory_order_acquire);
-            if (old == 0)
-                return 0;
-            return refCount.fetch_sub(1, std::memory_order_acq_rel) - 1;
+            while (old > 0) {
+                if (refCount.compare_exchange_weak(old, old - 1, std::memory_order_acq_rel))
+                    return old - 1;
+            }
+            return 0;
         }
         uint64_t getRef() {
             return refCount.load(std::memory_order_acquire);
@@ -6456,17 +6500,18 @@ namespace cjs {
             return thread.joinable();
         }
         void detach() {
-            return thread.detach();
+            if (thread.joinable()) thread.detach();
         }
         bool join() {
-            if (!joinable()) return false;
+            if (!thread.joinable()) return false;
             thread.join();
             return true;
         }
         bool isQuit() {
             HANDLE hThread = getHandle();
             if (hThread == NULL || hThread == INVALID_HANDLE_VALUE) return true;
-            return WaitForSingleObject(hThread, 0) == WAIT_OBJECT_0;
+            DWORD wait = WaitForSingleObject(hThread, 0);
+            return wait == WAIT_OBJECT_0 || wait == WAIT_FAILED;
         }
     private:
         std::thread thread = {};
@@ -6477,8 +6522,8 @@ namespace cjs {
     class Thread {
     public:
         void* operator new(size_t) = delete;
-        void* operator new[](size_t) = delete;
         void operator delete(void*) = delete;
+        void* operator new[](size_t) = delete;
         void operator delete[](void*) = delete;
         void* operator new(size_t, void*) = delete;
         void* operator new[](size_t, void*) = delete;
@@ -6520,20 +6565,35 @@ namespace cjs {
             return !abandoned || inst != nullptr;
         }
         void detach() {
-            if (!isValid()) return;
-            instance.load(std::memory_order_acquire)->detach();
+            ThreadInst* inst = instance.load(std::memory_order_acquire);
+            if (inst == nullptr) return;
+            if (inst->addRef() == static_cast<uint64_t>(-1)) return;
+            inst->detach();
+            inst->decRef();
         }
         bool join() {
-            if (!isValid()) return false;
-            return instance.load(std::memory_order_acquire)->join();
+            ThreadInst* inst = instance.load(std::memory_order_acquire);
+            if (inst == nullptr) return false;
+            if (inst->addRef() == static_cast<uint64_t>(-1)) return false;
+            bool r = inst->join();
+            inst->decRef();
+            return r;
         }
         bool joinable() {
-            if (!isValid()) return false;
-            return instance.load(std::memory_order_acquire)->joinable();
+            ThreadInst* inst = instance.load(std::memory_order_acquire);
+            if (inst == nullptr) return false;
+            if (inst->addRef() == static_cast<uint64_t>(-1)) return false;
+            bool r = inst->joinable();
+            inst->decRef();
+            return r;
         }
         bool quited() {
-            if (!isValid()) return true;
-            return instance.load(std::memory_order_acquire)->isQuit();
+            ThreadInst* inst = instance.load(std::memory_order_acquire);
+            if (inst == nullptr) return true;
+            if (inst->addRef() == static_cast<uint64_t>(-1)) return true;
+            bool r = inst->isQuit();
+            inst->decRef();
+            return r;
         }
         void abandon() {
             instance.store(nullptr, std::memory_order_release);
@@ -6543,8 +6603,12 @@ namespace cjs {
             return isAbandoned.load(std::memory_order_acquire);
         }
         HANDLE handle() {
-            if (!isValid()) return NULL;
-            return instance.load(std::memory_order_acquire)->getHandle();
+            ThreadInst* inst = instance.load(std::memory_order_acquire);
+            if (inst == nullptr) return NULL;
+            if (inst->addRef() == static_cast<uint64_t>(-1)) return NULL;
+            HANDLE h = inst->getHandle();
+            inst->decRef();
+            return h;
         }
     private:
         std::atomic<bool> isAbandoned = false;
@@ -6567,8 +6631,12 @@ namespace cjs {
                 otherInst->addRef();
         }
         void move(Thread&& other) {
-            release();
             ThreadInst* otherInst = other.instance.load(std::memory_order_acquire);
+            if (otherInst == instance.load(std::memory_order_acquire)) {
+                other.abandon();
+                return;
+            }
+            release();
             instance.store(otherInst, std::memory_order_release);
             other.abandon();
         }
@@ -6732,12 +6800,14 @@ namespace cjs {
 
         void open(const std::wstring& InMethod, const std::wstring& InUrl, bool InIsAsync = true, const std::wstring& InAuthUser = L"", const std::wstring& InAuthPassword = L"") noexcept {
             if (readyState != XHRReadyState::UNSENT) { abort(true); onClean(false); }
-            method = InMethod.empty() ? L"GET" : ToUpLetters(std::wstring(InMethod));
+            std::wstring m = InMethod.empty() ? L"GET" : ToUpLetters(std::wstring(InMethod));
+            if (m == L"CONNECT" || m == L"TRACE" || m == L"TRACK") m = L"GET";
+            method = m;
             urlInfo = GetURLINFOFromUrl(InUrl);
             isAsync = InIsAsync;
             authUser = InAuthUser;
             authPassword = InAuthPassword;
-            requestHeaders = { { L"User-Agent",L"CGI.JS/" + AY_CJS_CPP_VW }, { L"Accept", L"*/*" }, { L"Accept-Encoding", L"gzip" }, { L"Accept-Language", GetAcceptLanguageHeader() } };
+            requestHeaders = { { L"User-Agent",L"CGI.JS/" + AY_CJS_CPP_VW },{ L"Accept", L"*/*" },{ L"Accept-Encoding", L"gzip" },{ L"Accept-Language", GetAcceptLanguageHeader() } };
             isSended = false;
             changeReadyState(XHRReadyState::OPENED);
         }
@@ -6779,7 +6849,10 @@ namespace cjs {
                     else {
                         event.errorCode = NULL;
                         event.errorMessage = L"";
+                        event.loaded = 0;
+                        event.total = 0;
                         onError();
+                        if (onloadend) onloadend(event);
                         return false;
                     }
                 }
@@ -6796,6 +6869,8 @@ namespace cjs {
                     DWORD dwError = GetLastError();
                     event.errorCode = dwError;
                     event.errorMessage = GetErrorMessageFromErrorCode(dwError);
+                    event.loaded = 0;
+                    event.total = 0;
                     onError();
                     WinHttpCloseHandleSafely(hSession);
                     if (onloadend) onloadend(event);
@@ -6818,12 +6893,19 @@ namespace cjs {
                     DWORD dwError = GetLastError();
                     event.errorCode = dwError;
                     event.errorMessage = GetErrorMessageFromErrorCode(dwError);
+                    event.loaded = 0;
+                    event.total = 0;
 
+                    uploadEvent.errorCode = dwError;
+                    uploadEvent.errorMessage = event.errorMessage;
+                    uploadEvent.loaded = 0;
+                    uploadEvent.total = 0;
                     if (dwError == ERROR_WINHTTP_TIMEOUT) {
                         if (ontimeout) ontimeout(event);
-                        uploadEvent.errorCode = dwError;
-                        uploadEvent.errorMessage = event.errorMessage;
                         if (upload.ontimeout) upload.ontimeout(uploadEvent);
+                    }
+                    else {
+                        if (upload.onerror) upload.onerror(uploadEvent);
                     }
 
                     onError();
@@ -6832,6 +6914,7 @@ namespace cjs {
 
                     uploadEvent = {};
                     if (upload.onloadend) upload.onloadend(uploadEvent);
+                    if (onloadend) onloadend(event);
                     return false;
                 }
 
@@ -6849,17 +6932,20 @@ namespace cjs {
                     DWORD dwError = GetLastError();
                     event.errorCode = dwError;
                     event.errorMessage = GetErrorMessageFromErrorCode(dwError);
-
-                    if (dwError == ERROR_WINHTTP_TIMEOUT) {
-                        if (ontimeout) ontimeout(event);
-                        uploadEvent.errorCode = dwError;
-                        uploadEvent.errorMessage = event.errorMessage;
-                        if (upload.ontimeout) upload.ontimeout(uploadEvent);
-                    }
+                    event.loaded = 0;
+                    event.total = 0;
 
                     uploadEvent.errorCode = dwError;
                     uploadEvent.errorMessage = event.errorMessage;
-                    if (upload.onerror) upload.onerror(uploadEvent);
+                    uploadEvent.loaded = 0;
+                    uploadEvent.total = 0;
+                    if (dwError == ERROR_WINHTTP_TIMEOUT) {
+                        if (ontimeout) ontimeout(event);
+                        if (upload.ontimeout) upload.ontimeout(uploadEvent);
+                    }
+                    else {
+                        if (upload.onerror) upload.onerror(uploadEvent);
+                    }
 
                     onError();
                     WinHttpCloseHandleSafely(hRequest);
@@ -6868,6 +6954,7 @@ namespace cjs {
 
                     uploadEvent = {};
                     if (upload.onloadend) upload.onloadend(uploadEvent);
+                    if (onloadend) onloadend(event);
                     return false;
                 }
 
@@ -6893,6 +6980,8 @@ namespace cjs {
                     }
                 }
 
+                bool hasUpload = (totalLength > 0);
+
                 std::wstring requestHeadersWtring = GetHeadersFromHeaderList(requestHeaders);
 
                 BOOL bSendRequest = WinHttpSendRequest(
@@ -6909,9 +6998,13 @@ namespace cjs {
                     DWORD dwError = GetLastError();
                     event.errorCode = dwError;
                     event.errorMessage = GetErrorMessageFromErrorCode(dwError);
+                    event.loaded = 0;
+                    event.total = totalLength;
 
                     uploadEvent.errorCode = dwError;
                     uploadEvent.errorMessage = event.errorMessage;
+                    uploadEvent.loaded = 0;
+                    uploadEvent.total = totalLength;
                     if (upload.onerror) upload.onerror(uploadEvent);
 
                     onError();
@@ -6921,14 +7014,16 @@ namespace cjs {
 
                     uploadEvent = {};
                     if (upload.onloadend) upload.onloadend(uploadEvent);
+                    if (onloadend) onloadend(event);
                     return false;
                 }
 
+                event.loaded = 0;
+                event.total = totalLength;
                 if (onloadstart)
                     onloadstart(event);
 
-                bool uploadSuccess = false;
-                if (totalLength > 0) {
+                if (hasUpload) {
                     uploadEvent = {};
                     uploadEvent.total = totalLength;
                     uploadLoaded = 0;
@@ -6949,9 +7044,13 @@ namespace cjs {
                             DWORD dwError = GetLastError();
                             event.errorCode = dwError;
                             event.errorMessage = GetErrorMessageFromErrorCode(dwError);
+                            event.loaded = totalWritten;
+                            event.total = totalLength;
 
                             uploadEvent.errorCode = dwError;
                             uploadEvent.errorMessage = event.errorMessage;
+                            uploadEvent.loaded = totalWritten;
+                            uploadEvent.total = totalLength;
                             if (upload.onerror) upload.onerror(uploadEvent);
 
                             onError();
@@ -6961,6 +7060,7 @@ namespace cjs {
 
                             uploadEvent = {};
                             if (upload.onloadend) upload.onloadend(uploadEvent);
+                            if (onloadend) onloadend(event);
                             return false;
                         }
 
@@ -6973,25 +7073,20 @@ namespace cjs {
                     }
 
                     if (!isAborted && totalWritten == totalLength) {
-                        uploadSuccess = true;
+                        uploadEvent.loaded = totalLength;
+                        uploadEvent.total = totalLength;
                         if (upload.onload)
                             upload.onload(uploadEvent);
                     }
                 }
 
-                if (upload.onloadend)
-                    upload.onloadend(uploadEvent);
-
                 if (isAborted) {
-                    uploadEvent = {};
-                    if (upload.onabort) upload.onabort(uploadEvent);
-                    if (upload.onloadend) upload.onloadend(uploadEvent);
-
-                    WinHttpCloseHandleSafely(hRequest);
-                    WinHttpCloseHandleSafely(hConnect);
-                    WinHttpCloseHandleSafely(hSession);
-                    if (onloadend) onloadend(event);
                     return false;
+                }
+
+                if (hasUpload) {
+                    uploadEvent = {};
+                    if (upload.onloadend) upload.onloadend(uploadEvent);
                 }
 
                 BOOL bReceiveResponse = WinHttpReceiveResponse(hRequest, NULL);
@@ -6999,6 +7094,8 @@ namespace cjs {
                     DWORD dwError = GetLastError();
                     event.errorCode = dwError;
                     event.errorMessage = GetErrorMessageFromErrorCode(dwError);
+                    event.loaded = uploadTotal;
+                    event.total = uploadTotal;
                     onError();
                     WinHttpCloseHandleSafely(hRequest);
                     WinHttpCloseHandleSafely(hConnect);
@@ -7007,21 +7104,17 @@ namespace cjs {
                     return false;
                 }
 
-                changeReadyState(XHRReadyState::HEADERS_RECEIVED);
-                if (onheadersreceived)
-                    onheadersreceived(event);
+                if (isAborted) return false;
 
                 DWORD dwStatusCode = 0;
                 DWORD dwStatusCodeSize = sizeof(dwStatusCode);
-                if (WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                if (!WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
                     WINHTTP_HEADER_NAME_BY_INDEX, &dwStatusCode, &dwStatusCodeSize, WINHTTP_NO_HEADER_INDEX)) {
-                    status = (int)dwStatusCode;
-                    statusText = GetResponseMessageFromResponseCode(status);
-                }
-                else {
                     DWORD dwError = GetLastError();
                     event.errorCode = dwError;
                     event.errorMessage = GetErrorMessageFromErrorCode(dwError);
+                    event.loaded = uploadTotal;
+                    event.total = uploadTotal;
                     onError();
                     WinHttpCloseHandleSafely(hRequest);
                     WinHttpCloseHandleSafely(hConnect);
@@ -7029,6 +7122,11 @@ namespace cjs {
                     if (onloadend) onloadend(event);
                     return false;
                 }
+
+                status = (int)dwStatusCode;
+                statusText = GetResponseMessageFromResponseCode(status);
+
+                if (isAborted) return false;
 
                 responseHeaders.clear();
                 DWORD index = 0;
@@ -7080,6 +7178,12 @@ namespace cjs {
                     index++;
                 }
 
+                if (isAborted) return false;
+
+                changeReadyState(XHRReadyState::HEADERS_RECEIVED);
+                if (onheadersreceived)
+                    onheadersreceived(event);
+
                 if (method != L"HEAD") {
                     response.clear();
                     const DWORD chunk = 4096;
@@ -7097,19 +7201,39 @@ namespace cjs {
                     changeReadyState(XHRReadyState::LOADING);
 
                     DWORD avail = 0;
+                    bool readError = false;
                     while (!isAborted && WinHttpQueryDataAvailable(hRequest, &avail) && avail > 0) {
                         if (avail > buf.size())
                             buf.resize(avail);
                         DWORD read = 0;
-                        if (!WinHttpReadData(hRequest, buf.data(), avail, &read) || read == 0)
+                        if (!WinHttpReadData(hRequest, buf.data(), avail, &read) || read == 0) {
+                            readError = true;
                             break;
+                        }
                         response.insert(response.end(), buf.begin(), buf.begin() + read);
                         loaded += read;
                         pe.loaded = loaded;
+                        pe.total = total;
                         if (onprogress)
                             onprogress(pe);
                     }
+
+                    if (readError && !isAborted) {
+                        DWORD dwError = GetLastError();
+                        event.errorCode = dwError;
+                        event.errorMessage = GetErrorMessageFromErrorCode(dwError);
+                        event.loaded = loaded;
+                        event.total = total;
+                        onError();
+                        WinHttpCloseHandleSafely(hRequest);
+                        WinHttpCloseHandleSafely(hConnect);
+                        WinHttpCloseHandleSafely(hSession);
+                        if (onloadend) onloadend(event);
+                        return false;
+                    }
                 }
+
+                if (isAborted) return false;
 
                 UnGzip(&response);
 
@@ -7130,10 +7254,14 @@ namespace cjs {
 
                 event.errorCode = -1;
                 event.errorMessage = L"Unknown exception occurred";
+                event.loaded = loaded;
+                event.total = total;
                 if (onerror) onerror(event);
 
                 uploadEvent.errorCode = -1;
                 uploadEvent.errorMessage = L"Unknown exception occurred";
+                uploadEvent.loaded = uploadLoaded;
+                uploadEvent.total = uploadTotal;
                 if (upload.onerror) upload.onerror(uploadEvent);
 
                 uploadEvent = {};
@@ -7145,31 +7273,30 @@ namespace cjs {
 
         void abort(bool mode = false) noexcept {
             if (isAborted) return;
+            if (!mode && !isSended) return;
             isAborted = true;
             WinHttpCloseHandleSafely(hRequest);
             WinHttpCloseHandleSafely(hConnect);
             WinHttpCloseHandleSafely(hSession);
 
-            uploadEvent = {};
-            if (upload.onabort) upload.onabort(uploadEvent);
-            if (upload.onloadend) upload.onloadend(uploadEvent);
-
             if (!mode) {
+                uploadEvent.loaded = uploadLoaded;
+                uploadEvent.total = uploadTotal;
+                if (upload.onabort) upload.onabort(uploadEvent);
+                uploadEvent = {};
+                if (upload.onloadend) upload.onloadend(uploadEvent);
+
                 XHRReadyState oldState = readyState;
                 readyState = XHRReadyState::DONE;
                 status = 0;
                 statusText = L"";
-
-                if (onabort) {
-                    event.loaded = loaded;
-                    event.total = _wtoi64(getResponseHeader(L"Content-Length").c_str());
-                    onabort(event);
-                }
+                event.loaded = loaded;
+                event.total = total;
+                if (onabort) onabort(event);
                 onClean(true);
-                if (onreadystatechange && oldState != XHRReadyState::DONE)
+                if (oldState != XHRReadyState::DONE && onreadystatechange)
                     onreadystatechange();
-                if (onloadend)
-                    onloadend(event);
+                if (onloadend) onloadend(event);
             }
         }
 
@@ -7217,7 +7344,10 @@ namespace cjs {
             return responseHeaders;
         }
 
-        void overrideMimeType(std::wstring mimeType) { mimeTypeOverride = mimeType; }
+        void overrideMimeType(std::wstring mimeType) {
+            if (readyState == XHRReadyState::LOADING || readyState == XHRReadyState::DONE) return;
+            mimeTypeOverride = mimeType;
+        }
         void release() noexcept {
             abort(true);
             onClean(false);
@@ -7278,15 +7408,16 @@ namespace cjs {
         }
 
         void changeReadyState(XHRReadyState newState) {
-            if (readyState == newState || isAborted) return;
+            if (readyState == newState) return;
             readyState = newState;
             if (onreadystatechange) onreadystatechange();
         }
 
         void onError() {
-            if (status == 0) {
+            if (readyState != XHRReadyState::DONE) {
                 readyState = XHRReadyState::DONE;
                 statusText = L"";
+                if (onreadystatechange) onreadystatechange();
             }
             if (onerror) onerror(event);
         }
@@ -8960,7 +9091,6 @@ namespace cjs {
             JSV console = NewObject(ctx, global, "console");
             SetSymbolName(ctx, console, "Console");
             AppendMethod(ctx, console, "log", console_log);
-            AppendMethod(ctx, console, "log", console_log);
             AppendMethod(ctx, console, "clear", console_clear);
 
 
@@ -8996,10 +9126,6 @@ namespace cjs {
                     return NewNumber(ctx, 0).get(1);
                 }
                 JSMData& jsmd = *jsmdPtr;
-
-                if ((jsmdPtr->isAutoLoadModules == false && (configObject[L"general"]["isModuleMode"].isBool() && configObject[L"general"]["isModuleMode"].get<bool>() == false))) {
-                    return NewNumber(ctx, 0).get(1);
-                }
 
                 JSV global = NewGlobalObject(ctx);
                 SetSymbolName(ctx, global, "Global");
@@ -10929,8 +11055,10 @@ namespace cjs {
             Thread td = std::move(t);
             td.detach();
             jsmdPtr->threadList.push_back(td);
+            jsmdPtr->timeoutList.lock();
             jsmdPtr->timeoutList[id].thread = td;
             jsmdPtr->timeoutList[id].shared = nullptr;
+            jsmdPtr->timeoutList.unlock();
             update(ctx);
 
             return NewUint64(ctx, id).get(1);
@@ -15398,7 +15526,7 @@ namespace cjs {
                             }
                             CreateOutput(indent(depth + 1), pc);
                             CreateOutput(L"[[PromiseState]]: ", cNote);
-                            CreateOutput(state_str, *sc);
+                            CreateOutput(L"<" + state_str + L">", *sc);
                             CreateOutput(L"\n", pc);
                             CreateOutput(indent(depth + 1), pc);
                             CreateOutput(L"[[PromiseResult]]: ", cNote);
@@ -18043,7 +18171,9 @@ namespace cjs {
             t.thisVal = thisVal;
             t.args = args;
             t.flags = flags;
+            jsmdPtr->taskList.lock();
             jsmdPtr->taskList[id] = t;
+            jsmdPtr->taskList.unlock();
             return id;
         }
         static bool waitTask(JSContext* ctx, ULL id) {
@@ -18098,8 +18228,10 @@ namespace cjs {
                 JSContext* ctx_unused = nullptr;
                 JS_ExecutePendingJob(rt, &ctx_unused);
 
+                jsmdPtr->taskList.lock();
                 auto it = jsmdPtr->taskList.begin();
                 if (it == jsmdPtr->taskList.end()) {
+                    jsmdPtr->taskList.unlock();
                     continue;
                 }
                 ULL id = it->first;
@@ -18111,9 +18243,12 @@ namespace cjs {
                 td.isValid = true;
                 td.task = task;
                 td.ret = ret;
+                jsmdPtr->runnedTaskList.lock();
                 jsmdPtr->runnedTaskList[id] = td;
+                jsmdPtr->runnedTaskList.unlock();
 
                 jsmdPtr->taskList.erase(it);
+                jsmdPtr->taskList.unlock();
 
                 update(ctx);
             }
@@ -18163,7 +18298,10 @@ namespace cjs {
             JSMData* jsmdPtr = nullptr;
             if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) return 0;
             static ULL counter = 0;
-            return GetNewIdGeneric(ctx, jsmdPtr->taskList, counter);
+            jsmdPtr->taskList.lock();
+            ULL id = GetNewIdGeneric(ctx, jsmdPtr->taskList, counter);
+            jsmdPtr->taskList.unlock();
+            return id;
         }
         static ULL GetNewCJSValueId(JSContext* ctx) {
             JSMData* jsmdPtr = nullptr;
