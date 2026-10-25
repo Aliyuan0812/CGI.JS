@@ -6653,10 +6653,12 @@ namespace cjs {
     typedef ordered_multimap<std::string, FORMDATAITEM> FORMDATA, * FORMDATA_PTR;
 
     struct Task {
+        std::string type = "js";
         JSV task = JSV();
         JSV thisVal = JSV();
         JSV flags = {};
         std::vector<JSV> args = {};
+        std::function<void()> nativeCallback = nullptr;
     };
 
     struct TaskData {
@@ -9524,14 +9526,16 @@ namespace cjs {
             SetAttribute(ctx, upload, "ontimeout", JS_NULL);
 
             xhr->onreadystatechange = [=]() {
-                SetAttribute(ctx, returnValue, "readyState", NewNumber(ctx, static_cast<double>(xhr->readyState)));
-                if (xhr->readyState == 3) {
-                    SetAttribute(ctx, returnValue, "status", NewNumber(ctx, static_cast<double>(xhr->status)));
-                    SetAttribute(ctx, returnValue, "statusText", NewString(ctx, wstringToString(xhr->statusText)));
-                }
+                AddNativeTask(ctx, [=]() {
+                    SetAttribute(ctx, returnValue, "readyState", NewNumber(ctx, static_cast<double>(xhr->readyState)));
+                    if (xhr->readyState == 3) {
+                        SetAttribute(ctx, returnValue, "status", NewNumber(ctx, static_cast<double>(xhr->status)));
+                        SetAttribute(ctx, returnValue, "statusText", NewString(ctx, wstringToString(xhr->statusText)));
+                    }
 
-                JSV callback = GetProperty(ctx, returnValue, "onreadystatechange");
-                if (callback.isValid() && JS_IsFunction(ctx, callback.get(0))) CallFunction(ctx, callback, returnValue, {}, true);
+                    JSV callback = GetProperty(ctx, returnValue, "onreadystatechange");
+                    if (callback.isValid() && JS_IsFunction(ctx, callback.get(0))) CallFunction(ctx, callback, returnValue, {}, true);
+                    });
                 };
 
             auto onload = [=](JSV callback) {
@@ -9544,10 +9548,12 @@ namespace cjs {
                 SetAttribute(ctx, callbackValue, "lengthComputable", NewBool(ctx, (xhr->total != 0) ? true : false));
                 SetAttribute(ctx, callbackValue, "target", returnValue);
 
-                if (callback.isValid() && JS_IsFunction(ctx, callback.get(0))) CallFunction(ctx, callback, returnValue, { {callbackValue} }, true);
+                if (callback.isValid() && JS_IsFunction(ctx, callback.get(0))) CallFunction(ctx, callback, returnValue, { { callbackValue } }, true, false);
                 };
             xhr->onload = [=](...) {
-                onload(GetProperty(ctx, returnValue, "onload"));
+                AddNativeTask(ctx, [=]() {
+                    onload(GetProperty(ctx, returnValue, "onload"));
+                    });
                 };
 
             auto onuploadload = [=](const XHRPROGRESSEVENT& e) {
@@ -9558,11 +9564,15 @@ namespace cjs {
                 SetAttribute(ctx, callbackValue, "total", NewNumber(ctx, static_cast<double>(e.total)));
                 SetAttribute(ctx, callbackValue, "lengthComputable", NewBool(ctx, e.total != 0));
                 SetAttribute(ctx, callbackValue, "target", returnValue);
-                JSV callback = GetProperty(ctx, returnValue, { {"upload"}, {"onload"} });
+                JSV callback = GetProperty(ctx, returnValue, { { "upload" },{ "onload" } });
                 if (callback.isValid() && JS_IsFunction(ctx, callback.get(0)))
-                    CallFunction(ctx, callback, returnValue, { {callbackValue} }, true);
+                    CallFunction(ctx, callback, returnValue, { { callbackValue } }, true, false);
                 };
-            xhr->upload.onload = onuploadload;
+            xhr->upload.onload = [=](const XHRPROGRESSEVENT& e) {
+                AddNativeTask(ctx, [=]() {
+                    onuploadload(e);
+                    });
+                };
 
             auto onloadstart = [=](JSV callback) {
                 JSV callbackValue = NewObject(ctx);
@@ -9574,10 +9584,12 @@ namespace cjs {
                 SetAttribute(ctx, callbackValue, "lengthComputable", NewBool(ctx, false));
                 SetAttribute(ctx, callbackValue, "target", returnValue);
 
-                if (callback.isValid() && JS_IsFunction(ctx, callback.get(0))) CallFunction(ctx, callback, returnValue, { {callbackValue} }, true);
+                if (callback.isValid() && JS_IsFunction(ctx, callback.get(0))) CallFunction(ctx, callback, returnValue, { { callbackValue } }, true, false);
                 };
             xhr->onloadstart = [=](...) {
-                onloadstart(GetProperty(ctx, returnValue, "onloadstart"));
+                AddNativeTask(ctx, [=]() {
+                    onloadstart(GetProperty(ctx, returnValue, "onloadstart"));
+                    });
                 };
 
             auto onuploadstart = [=](const XHRPROGRESSEVENT& e) {
@@ -9588,11 +9600,15 @@ namespace cjs {
                 SetAttribute(ctx, callbackValue, "total", NewNumber(ctx, static_cast<double>(e.total)));
                 SetAttribute(ctx, callbackValue, "lengthComputable", NewBool(ctx, false));
                 SetAttribute(ctx, callbackValue, "target", returnValue);
-                JSV callback = GetProperty(ctx, returnValue, { {"upload"}, {"onloadstart"} });
+                JSV callback = GetProperty(ctx, returnValue, { { "upload" },{ "onloadstart" } });
                 if (callback.isValid() && JS_IsFunction(ctx, callback.get(0)))
-                    CallFunction(ctx, callback, returnValue, { {callbackValue} }, true);
+                    CallFunction(ctx, callback, returnValue, { { callbackValue } }, true, false);
                 };
-            xhr->upload.onloadstart = onuploadstart;
+            xhr->upload.onloadstart = [=](const XHRPROGRESSEVENT& e) {
+                AddNativeTask(ctx, [=]() {
+                    onuploadstart(e);
+                    });
+                };
 
             auto onprogress = [=](JSV callback) {
                 std::string responseType = "";
@@ -9626,10 +9642,12 @@ namespace cjs {
                 SetAttribute(ctx, callbackValue, "lengthComputable", NewBool(ctx, (xhr->total != 0) ? true : false));
                 SetAttribute(ctx, callbackValue, "target", returnValue);
 
-                if (callback.isValid() && JS_IsFunction(ctx, callback.get(0))) CallFunction(ctx, callback, returnValue, { {callbackValue} }, true);
+                if (callback.isValid() && JS_IsFunction(ctx, callback.get(0))) CallFunction(ctx, callback, returnValue, { { callbackValue } }, true, false);
                 };
             xhr->onprogress = [=](...) {
-                onprogress(GetProperty(ctx, returnValue, "onprogress"));
+                AddNativeTask(ctx, [=]() {
+                    onprogress(GetProperty(ctx, returnValue, "onprogress"));
+                    });
                 };
 
             auto onuploadprogress = [=](const XHRPROGRESSEVENT& e) {
@@ -9640,11 +9658,15 @@ namespace cjs {
                 SetAttribute(ctx, callbackValue, "total", NewNumber(ctx, static_cast<double>(e.total)));
                 SetAttribute(ctx, callbackValue, "lengthComputable", NewBool(ctx, e.total != 0));
                 SetAttribute(ctx, callbackValue, "target", returnValue);
-                JSV callback = GetProperty(ctx, returnValue, { {"upload"}, {"onprogress"} });
+                JSV callback = GetProperty(ctx, returnValue, { { "upload" },{ "onprogress" } });
                 if (callback.isValid() && JS_IsFunction(ctx, callback.get(0)))
-                    CallFunction(ctx, callback, returnValue, { {callbackValue} }, true);
+                    CallFunction(ctx, callback, returnValue, { { callbackValue } }, true, false);
                 };
-            xhr->upload.onprogress = onuploadprogress;
+            xhr->upload.onprogress = [=](const XHRPROGRESSEVENT& e) {
+                AddNativeTask(ctx, [=]() {
+                    onuploadprogress(e);
+                    });
+                };
 
             auto onerror = [=](JSV callback) {
                 JSV callbackValue = NewObject(ctx);
@@ -9656,10 +9678,12 @@ namespace cjs {
                 SetAttribute(ctx, callbackValue, "lengthComputable", NewBool(ctx, false));
                 SetAttribute(ctx, callbackValue, "target", returnValue);
 
-                if (callback.isValid() && JS_IsFunction(ctx, callback.get(0))) CallFunction(ctx, callback, returnValue, { {callbackValue} }, true);
+                if (callback.isValid() && JS_IsFunction(ctx, callback.get(0))) CallFunction(ctx, callback, returnValue, { { callbackValue } }, true, false);
                 };
             xhr->onerror = [=](...) {
-                onerror(GetProperty(ctx, returnValue, "onerror"));
+                AddNativeTask(ctx, [=]() {
+                    onerror(GetProperty(ctx, returnValue, "onerror"));
+                    });
                 };
 
             auto onuploaderror = [=](const XHRPROGRESSEVENT& e) {
@@ -9670,11 +9694,15 @@ namespace cjs {
                 SetAttribute(ctx, callbackValue, "total", NewNumber(ctx, static_cast<double>(e.total)));
                 SetAttribute(ctx, callbackValue, "lengthComputable", NewBool(ctx, false));
                 SetAttribute(ctx, callbackValue, "target", returnValue);
-                JSV callback = GetProperty(ctx, returnValue, { {"upload"}, {"onerror"} });
+                JSV callback = GetProperty(ctx, returnValue, { { "upload" },{ "onerror" } });
                 if (callback.isValid() && JS_IsFunction(ctx, callback.get(0)))
-                    CallFunction(ctx, callback, returnValue, { {callbackValue} }, true);
+                    CallFunction(ctx, callback, returnValue, { { callbackValue } }, true, false);
                 };
-            xhr->upload.onerror = onuploaderror;
+            xhr->upload.onerror = [=](const XHRPROGRESSEVENT& e) {
+                AddNativeTask(ctx, [=]() {
+                    onuploaderror(e);
+                    });
+                };
 
             auto ontimeout = [=](JSV callback) {
                 JSV callbackValue = NewObject(ctx);
@@ -9686,10 +9714,12 @@ namespace cjs {
                 SetAttribute(ctx, callbackValue, "lengthComputable", NewBool(ctx, false));
                 SetAttribute(ctx, callbackValue, "target", returnValue);
 
-                if (callback.isValid() && JS_IsFunction(ctx, callback.get(0))) CallFunction(ctx, callback, returnValue, { {callbackValue} }, true);
+                if (callback.isValid() && JS_IsFunction(ctx, callback.get(0))) CallFunction(ctx, callback, returnValue, { { callbackValue } }, true, false);
                 };
             xhr->ontimeout = [=](...) {
-                ontimeout(GetProperty(ctx, returnValue, "ontimeout"));
+                AddNativeTask(ctx, [=]() {
+                    ontimeout(GetProperty(ctx, returnValue, "ontimeout"));
+                    });
                 };
 
             auto onuploadtimeout = [=](const XHRPROGRESSEVENT& e) {
@@ -9700,11 +9730,15 @@ namespace cjs {
                 SetAttribute(ctx, callbackValue, "total", NewNumber(ctx, static_cast<double>(e.total)));
                 SetAttribute(ctx, callbackValue, "lengthComputable", NewBool(ctx, false));
                 SetAttribute(ctx, callbackValue, "target", returnValue);
-                JSV callback = GetProperty(ctx, returnValue, { {"upload"}, {"ontimeout"} });
+                JSV callback = GetProperty(ctx, returnValue, { { "upload" },{ "ontimeout" } });
                 if (callback.isValid() && JS_IsFunction(ctx, callback.get(0)))
-                    CallFunction(ctx, callback, returnValue, { {callbackValue} }, true);
+                    CallFunction(ctx, callback, returnValue, { { callbackValue } }, true, false);
                 };
-            xhr->upload.ontimeout = onuploadtimeout;
+            xhr->upload.ontimeout = [=](const XHRPROGRESSEVENT& e) {
+                AddNativeTask(ctx, [=]() {
+                    onuploadtimeout(e);
+                    });
+                };
 
             auto onabort = [=](JSV callback) {
                 JSV callbackValue = NewObject(ctx);
@@ -9716,10 +9750,12 @@ namespace cjs {
                 SetAttribute(ctx, callbackValue, "lengthComputable", NewBool(ctx, false));
                 SetAttribute(ctx, callbackValue, "target", returnValue);
 
-                if (callback.isValid() && JS_IsFunction(ctx, callback.get(0))) CallFunction(ctx, callback, returnValue, { {callbackValue} }, true);
+                if (callback.isValid() && JS_IsFunction(ctx, callback.get(0))) CallFunction(ctx, callback, returnValue, { { callbackValue } }, true, false);
                 };
             xhr->onabort = [=](...) {
-                onabort(GetProperty(ctx, returnValue, "onabort"));
+                AddNativeTask(ctx, [=]() {
+                    onabort(GetProperty(ctx, returnValue, "onabort"));
+                    });
                 };
 
             auto onuploadabort = [=](const XHRPROGRESSEVENT& e) {
@@ -9730,11 +9766,15 @@ namespace cjs {
                 SetAttribute(ctx, callbackValue, "total", NewNumber(ctx, static_cast<double>(e.total)));
                 SetAttribute(ctx, callbackValue, "lengthComputable", NewBool(ctx, false));
                 SetAttribute(ctx, callbackValue, "target", returnValue);
-                JSV callback = GetProperty(ctx, returnValue, { {"upload"}, {"onabort"} });
+                JSV callback = GetProperty(ctx, returnValue, { { "upload" },{ "onabort" } });
                 if (callback.isValid() && JS_IsFunction(ctx, callback.get(0)))
-                    CallFunction(ctx, callback, returnValue, { {callbackValue} }, true);
+                    CallFunction(ctx, callback, returnValue, { { callbackValue } }, true, false);
                 };
-            xhr->upload.onabort = onuploadabort;
+            xhr->upload.onabort = [=](const XHRPROGRESSEVENT& e) {
+                AddNativeTask(ctx, [=]() {
+                    onuploadabort(e);
+                    });
+                };
 
             auto onloadend = [=](XHRPROGRESSEVENT event, JSV callback) {
                 std::string responseType = "";
@@ -9768,29 +9808,37 @@ namespace cjs {
                 SetAttribute(ctx, callbackValue, "lengthComputable", NewBool(ctx, event.lengthComputable));
                 SetAttribute(ctx, callbackValue, "target", returnValue);
 
-                if (callback.isValid() && JS_IsFunction(ctx, callback.get(0))) CallFunction(ctx, callback, returnValue, { {callbackValue} }, true);
+                if (callback.isValid() && JS_IsFunction(ctx, callback.get(0))) CallFunction(ctx, callback, returnValue, { { callbackValue } }, true, false);
                 };
             xhr->onloadend = [=](XHRPROGRESSEVENT event) {
-                onloadend(event, GetProperty(ctx, returnValue, "onloadend"));
+                AddNativeTask(ctx, [=]() {
+                    onloadend(event, GetProperty(ctx, returnValue, "onloadend"));
+                    });
                 };
 
             auto onuploadend = [=](XHRPROGRESSEVENT event) {
-                onloadend(event, GetProperty(ctx, returnValue, { {"upload"}, {"onloadend"} }));
+                onloadend(event, GetProperty(ctx, returnValue, { { "upload" },{ "onloadend" } }));
                 };
-            xhr->upload.onloadend = onuploadend;
+            xhr->upload.onloadend = [=](XHRPROGRESSEVENT event) {
+                AddNativeTask(ctx, [=]() {
+                    onuploadend(event);
+                    });
+                };
 
             xhr->onheadersreceived = [=](...) {
-                JSV callbackValue = NewObject(ctx);
-                SetSymbolName(ctx, callbackValue, "ProgressEvent");
+                AddNativeTask(ctx, [=]() {
+                    JSV callbackValue = NewObject(ctx);
+                    SetSymbolName(ctx, callbackValue, "ProgressEvent");
 
-                SetAttribute(ctx, callbackValue, "type", NewString(ctx, "headersreceived"));
-                SetAttribute(ctx, callbackValue, "loaded", NewNumber(ctx, 0.0));
-                SetAttribute(ctx, callbackValue, "total", NewNumber(ctx, 0.0));
-                SetAttribute(ctx, callbackValue, "lengthComputable", NewBool(ctx, false));
-                SetAttribute(ctx, callbackValue, "target", returnValue);
+                    SetAttribute(ctx, callbackValue, "type", NewString(ctx, "headersreceived"));
+                    SetAttribute(ctx, callbackValue, "loaded", NewNumber(ctx, 0.0));
+                    SetAttribute(ctx, callbackValue, "total", NewNumber(ctx, 0.0));
+                    SetAttribute(ctx, callbackValue, "lengthComputable", NewBool(ctx, false));
+                    SetAttribute(ctx, callbackValue, "target", returnValue);
 
-                JSV callback = GetProperty(ctx, returnValue, "onheadersreceived");
-                if (callback.isValid() && JS_IsFunction(ctx, callback.get(0))) CallFunction(ctx, callback, returnValue, { {callbackValue} }, true);
+                    JSV callback = GetProperty(ctx, returnValue, "onheadersreceived");
+                    if (callback.isValid() && JS_IsFunction(ctx, callback.get(0))) CallFunction(ctx, callback, returnValue, { { callbackValue } }, true, false);
+                    });
                 };
 
             AppendMethod(ctx, returnValue, "open", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)->JSValue {
@@ -11046,7 +11094,10 @@ namespace cjs {
                 }
 
                 if (!isQuit && jsmdPtr->timeoutList[id].shared == nullptr && !jsmdPtr->isQuit) {
-                    CallFunction(ctx, js_callback, NewGlobalObject(ctx), {}, true);
+                    AddNativeTask(ctx, [=]() {
+                        CallFunction(ctx, js_callback, NewGlobalObject(ctx), {}, true, false);
+                        });
+                   
                 }
 
                 jsmdPtr->timeoutList.erase(id);
@@ -18165,13 +18216,26 @@ namespace cjs {
         static ULL AddTask(JSContext* ctx, JSV task, JSV thisVal, std::vector<JSV> args, JSV flags = {}) {
             JSMData* jsmdPtr = nullptr;
             if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) return 0;
+            jsmdPtr->taskList.lock();
             ULL id = GetNewTaskId(ctx);
             Task t = {};
+            t.type = "js";
             t.task = task;
             t.thisVal = thisVal;
             t.args = args;
             t.flags = flags;
+            jsmdPtr->taskList[id] = t;
+            jsmdPtr->taskList.unlock();
+            return id;
+        }
+        static ULL AddNativeTask(JSContext* ctx, std::function<void()> nativeCallback) {
+            JSMData* jsmdPtr = nullptr;
+            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) return 0;
             jsmdPtr->taskList.lock();
+            ULL id = GetNewTaskId(ctx);
+            Task t = {};
+            t.type = "native";
+            t.nativeCallback = nativeCallback;
             jsmdPtr->taskList[id] = t;
             jsmdPtr->taskList.unlock();
             return id;
@@ -18237,15 +18301,21 @@ namespace cjs {
                 ULL id = it->first;
                 Task task = it->second;
 
-                JSV ret = CallFunction(ctx, task.task, task.thisVal, task.args);
+                if (task.type == "js") {
 
-                TaskData td = {};
-                td.isValid = true;
-                td.task = task;
-                td.ret = ret;
-                jsmdPtr->runnedTaskList.lock();
-                jsmdPtr->runnedTaskList[id] = td;
-                jsmdPtr->runnedTaskList.unlock();
+                    JSV ret = CallFunction(ctx, task.task, task.thisVal, task.args);
+                    TaskData td = {};
+                    td.isValid = true;
+                    td.task = task;
+                    td.ret = ret;
+                    jsmdPtr->runnedTaskList.lock();
+                    jsmdPtr->runnedTaskList[id] = td;
+                    jsmdPtr->runnedTaskList.unlock();
+
+                }
+                else if (task.type == "native" && task.nativeCallback) {
+                    task.nativeCallback();
+                }
 
                 jsmdPtr->taskList.erase(it);
                 jsmdPtr->taskList.unlock();
