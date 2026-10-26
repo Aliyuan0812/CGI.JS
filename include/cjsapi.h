@@ -47,6 +47,19 @@ extern "C" {
         return CARSUCCESS;
     }
     /**
+     * @brief 查询可用方法。
+     * @return 可用性。
+     */
+    CJSBool CJS_QueryMethod(cjs_string in_name) {
+        char buf[256];
+        const char* pre = "cjs_";
+        char* p = buf;
+        while (*pre && p < buf + sizeof(buf) - 1) *p++ = *pre++;
+        while (*in_name && p < buf + sizeof(buf) - 1) *p++ = *in_name++;
+        *p = '\0';
+        return GetProcAddress(hm, buf) != nullptr;
+    }
+    /**
      * @brief 获取全局对象。
      * @return JS值(Object)。
      */

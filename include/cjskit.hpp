@@ -7538,34 +7538,45 @@ namespace cjs {
     static unordered_map_lock<JSContext*, JSMData> jsinfo = {};
     bool GetData(JSContext* ctx, JSMData* jsmd) {
         if (ctx == nullptr || jsmd == nullptr) return false;
+        jsinfo.lock();
         auto it = jsinfo.find(ctx);
         if (it != jsinfo.end()) {
             *jsmd = it->second;
+            jsinfo.unlock();
             return true;
         }
+        jsinfo.unlock();
         return false;
     }
     bool RemoveData(JSContext* ctx) {
         if (ctx == nullptr) return false;
+        jsinfo.lock();
         auto it = jsinfo.find(ctx);
         if (it != jsinfo.end()) {
             jsinfo.erase(it);
+            jsinfo.unlock();
             return true;
         }
+        jsinfo.unlock();
         return false;
     }
     bool SetData(JSContext* ctx, JSMData* jsmd) {
         if (ctx == nullptr || jsmd == nullptr) return false;
+        jsinfo.lock();
         jsinfo[ctx] = *jsmd;
+        jsinfo.unlock();
         return true;
     }
     bool GetData(JSContext* ctx, JSMData** jsmd) {
         if (ctx == nullptr || jsmd == nullptr) return false;
+        jsinfo.lock();
         auto it = jsinfo.find(ctx);
         if (it != jsinfo.end()) {
             *jsmd = &(it->second);
+            jsinfo.unlock();
             return true;
         }
+        jsinfo.unlock();
         return false;
     }
     bool RemoveSameJSValue(JSContext* ctx, std::vector<JSValue>& jsvLst) {
@@ -10206,34 +10217,25 @@ namespace cjs {
                 promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.bytebuffer_readAsJson] Only 1 argument is supported: (data)"));
                 return promise.promise.get(1);
             }
-
             JSV js_data = JSV(ctx, &argumentValues[0]).cget(1).cset(1);
-
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
-            }
-
-            std::thread t([=]() {
-                BYTEBUFFER data = ToValue(ctx, js_data);
+            BYTEBUFFER data = ToValue(ctx, js_data);
+            AddAsyncTask(ctx, [=, data = std::move(data)]() mutable {
                 std::wstring text = GetTextFromBYTEBUFFER(&data);
                 OBJECT jsonObject;
                 try {
                     jsonObject = JSON.parse(text);
                 }
                 catch (const std::invalid_argument& e) {
-                    promise.Reject(ctx, NewSyntaxError(ctx, std::string("[bytebuffer.readAsJson] Failed to parse JSON: ") + e.what()));
+                    AddNativeTask(ctx, [=]() mutable {
+                        promise.Reject(ctx, NewSyntaxError(ctx, std::string("[bytebuffer.readAsJson] Failed to parse JSON: ") + e.what()));
+                        });
                     return;
                 }
-                promise.Resolve(ctx, NewObject(ctx, jsonObject));
+                AddNativeTask(ctx, [=]() mutable {
+                    promise.Resolve(ctx, NewObject(ctx, jsonObject));
+                    });
                 return;
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
-
             return promise.promise.get(1);
         }
         static JSValue bytebuffer_readAsFormData(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -10242,26 +10244,19 @@ namespace cjs {
                 promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.readAsFormData] Only 1 argument is supported: (data)"));
                 return promise.promise.get(1);
             }
-
             JSV js_data = JSV(ctx, &argumentValues[0]).cget(1).cset(1);
-
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
-            }
-
-            std::thread t([=]() {
-                JSV result = CallConstructor(ctx, GetProperty(ctx, NewGlobalObject(ctx), "FormData"), { js_data });
-                if (JS_IsException(result.get(0))) promise.Reject(ctx, result);
-                else promise.Resolve(ctx, result);
-                return;
+            BYTEBUFFER data = ToValue(ctx, js_data);
+            AddAsyncTask(ctx, [=, data = std::move(data)]() mutable {
+                AddNativeTask(ctx, [=]() mutable {
+                    JSV result = CallConstructor(ctx, GetProperty(ctx, NewGlobalObject(ctx), "FormData"), { js_data });
+                    if (JS_IsException(result.get(0))) {
+                        promise.Reject(ctx, result);
+                    }
+                    else {
+                        promise.Resolve(ctx, result);
+                    }
+                    });
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
-
             return promise.promise.get(1);
         }
         static JSValue bytebuffer_readAsString(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -10270,35 +10265,22 @@ namespace cjs {
                 promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.readAsString] Only 1 argument is supported: (data)"));
                 return promise.promise.get(1);
             }
-
             JSV js_data = JSV(ctx, &argumentValues[0]).cget(1).cset(1);
-
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
-            }
-
-            std::thread t([=]() {
-                BYTEBUFFER data = ToValue(ctx, js_data);
-                promise.Resolve(ctx, NewString(ctx, GetTextFromBinary(&data)));
-                return;
+            BYTEBUFFER data = ToValue(ctx, js_data);
+            AddAsyncTask(ctx, [=, data = std::move(data)]() mutable {
+                std::string text = GetTextFromBinary(&data);
+                AddNativeTask(ctx, [=]() mutable {
+                    promise.Resolve(ctx, NewString(ctx, text));
+                    });
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
-
             return promise.promise.get(1);
         }
-
         static JSValue bytebuffer_decodeBase91(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             Promise promise = NewPromise(ctx);
             if (argumentCount > 2) {
                 promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.decodeBase91] Only 1 or 2 arguments are supported: (data, isUrlEncoding?)"));
                 return promise.promise.get(1);
             }
-
             JSV js_data = JSV(ctx, &argumentValues[0]).cget(1).cset(1);
             JSV js_isUrlEncoding = (argumentCount == 2) ? JSV(ctx, &argumentValues[1]).cget(1).cset(1) : NewBool(ctx, false);
             bool isUrlEncoding = false;
@@ -10306,27 +10288,18 @@ namespace cjs {
                 promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.decodeBase91] The second argument must be a boolean"));
                 return promise.promise.get(1);
             }
-
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
-            }
-
-            std::thread t([=]() {
-                BYTEBUFFER data = ToValue(ctx, js_data);
+            BYTEBUFFER data = ToValue(ctx, js_data);
+            AddAsyncTask(ctx, [=, data = std::move(data)]() mutable {
                 if (!BaseXToBinary(&data, 91, isUrlEncoding)) {
-                    promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.decodeBase91] Failed to decoding data"));
+                    AddNativeTask(ctx, [=]() mutable {
+                        promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.decodeBase91] Failed to decoding data"));
+                        });
                     return;
                 }
-                promise.Resolve(ctx, NewUint8Array(ctx, data));
-                return;
+                AddNativeTask(ctx, [=]() mutable {
+                    promise.Resolve(ctx, NewUint8Array(ctx, data));
+                    });
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
-
             return promise.promise.get(1);
         }
         static JSValue bytebuffer_decodeBase85(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -10335,29 +10308,19 @@ namespace cjs {
                 promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.decodeBase85] Only 1 argument is supported: (data)"));
                 return promise.promise.get(1);
             }
-
             JSV js_data = JSV(ctx, &argumentValues[0]).cget(1).cset(1);
-
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
-            }
-
-            std::thread t([=]() {
-                BYTEBUFFER data = ToValue(ctx, js_data);
+            BYTEBUFFER data = ToValue(ctx, js_data);
+            AddAsyncTask(ctx, [=, data = std::move(data)]() mutable {
                 if (!BaseXToBinary(&data, 85, false)) {
-                    promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.decodeBase85] Failed to decoding data"));
+                    AddNativeTask(ctx, [=]() mutable {
+                        promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.decodeBase85] Failed to decoding data"));
+                        });
                     return;
                 }
-                promise.Resolve(ctx, NewUint8Array(ctx, data));
-                return;
+                AddNativeTask(ctx, [=]() mutable {
+                    promise.Resolve(ctx, NewUint8Array(ctx, data));
+                    });
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
-
             return promise.promise.get(1);
         }
         static JSValue bytebuffer_decodeBase64(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -10366,7 +10329,6 @@ namespace cjs {
                 promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.decodeBase64] Only 1 or 2 arguments are supported: (data, isUrlEncoding?)"));
                 return promise.promise.get(1);
             }
-
             JSV js_data = JSV(ctx, &argumentValues[0]).cget(1).cset(1);
             JSV js_isUrlEncoding = (argumentCount == 2) ? JSV(ctx, &argumentValues[1]).cget(1).cset(1) : NewBool(ctx, false);
             bool isUrlEncoding = false;
@@ -10374,29 +10336,18 @@ namespace cjs {
                 promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.decodeBase64] The second argument must be a boolean"));
                 return promise.promise.get(1);
             }
-
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
-            }
-
-            std::thread t([=]() {
-
-                BYTEBUFFER data = ToValue(ctx, js_data);
+            BYTEBUFFER data = ToValue(ctx, js_data);
+            AddAsyncTask(ctx, [=, data = std::move(data)]() mutable {
                 if (!BaseXToBinary(&data, 64, isUrlEncoding)) {
-                    promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.decodeBase64] Failed to decoding data"));
+                    AddNativeTask(ctx, [=]() mutable {
+                        promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.decodeBase64] Failed to decoding data"));
+                        });
                     return;
                 }
-                promise.Resolve(ctx, NewUint8Array(ctx, data));
-                return;
-
+                AddNativeTask(ctx, [=]() mutable {
+                    promise.Resolve(ctx, NewUint8Array(ctx, data));
+                    });
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
-
             return promise.promise.get(1);
         }
         static JSValue bytebuffer_decodeBase62(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -10405,29 +10356,19 @@ namespace cjs {
                 promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.decodeBase62] Only 1 argument is supported: (data)"));
                 return promise.promise.get(1);
             }
-
             JSV js_data = JSV(ctx, &argumentValues[0]).cget(1).cset(1);
-
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
-            }
-
-            std::thread t([=]() {
-                BYTEBUFFER data = ToValue(ctx, js_data);
+            BYTEBUFFER data = ToValue(ctx, js_data);
+            AddAsyncTask(ctx, [=, data = std::move(data)]() mutable {
                 if (!BaseXToBinary(&data, 62, false)) {
-                    promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.decodeBase62] Failed to decoding data"));
+                    AddNativeTask(ctx, [=]() mutable {
+                        promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.decodeBase62] Failed to decoding data"));
+                        });
                     return;
                 }
-                promise.Resolve(ctx, NewUint8Array(ctx, data));
-                return;
+                AddNativeTask(ctx, [=]() mutable {
+                    promise.Resolve(ctx, NewUint8Array(ctx, data));
+                    });
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
-
             return promise.promise.get(1);
         }
         static JSValue bytebuffer_decodeBase58(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -10436,29 +10377,19 @@ namespace cjs {
                 promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.decodeBase58] Only 1 argument is supported: (data)"));
                 return promise.promise.get(1);
             }
-
             JSV js_data = JSV(ctx, &argumentValues[0]).cget(1).cset(1);
-
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
-            }
-
-            std::thread t([=]() {
-                BYTEBUFFER data = ToValue(ctx, js_data);
+            BYTEBUFFER data = ToValue(ctx, js_data);
+            AddAsyncTask(ctx, [=, data = std::move(data)]() mutable {
                 if (!BaseXToBinary(&data, 58, false)) {
-                    promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.decodeBase58] Failed to decoding data"));
+                    AddNativeTask(ctx, [=]() mutable {
+                        promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.decodeBase58] Failed to decoding data"));
+                        });
                     return;
                 }
-                promise.Resolve(ctx, NewUint8Array(ctx, data));
-                return;
+                AddNativeTask(ctx, [=]() mutable {
+                    promise.Resolve(ctx, NewUint8Array(ctx, data));
+                    });
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
-
             return promise.promise.get(1);
         }
         static JSValue bytebuffer_decodeBase32(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -10467,29 +10398,19 @@ namespace cjs {
                 promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.decodeBase32] Only 1 argument is supported: (data)"));
                 return promise.promise.get(1);
             }
-
             JSV js_data = JSV(ctx, &argumentValues[0]).cget(1).cset(1);
-
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
-            }
-
-            std::thread t([=]() {
-                BYTEBUFFER data = ToValue(ctx, js_data);
+            BYTEBUFFER data = ToValue(ctx, js_data);
+            AddAsyncTask(ctx, [=, data = std::move(data)]() mutable {
                 if (!BaseXToBinary(&data, 32, false)) {
-                    promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.decodeBase32] Failed to decoding data"));
+                    AddNativeTask(ctx, [=]() mutable {
+                        promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.decodeBase32] Failed to decoding data"));
+                        });
                     return;
                 }
-                promise.Resolve(ctx, NewUint8Array(ctx, data));
-                return;
+                AddNativeTask(ctx, [=]() mutable {
+                    promise.Resolve(ctx, NewUint8Array(ctx, data));
+                    });
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
-
             return promise.promise.get(1);
         }
         static JSValue bytebuffer_decodeBase16(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -10498,41 +10419,27 @@ namespace cjs {
                 promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.decodeBase16] Only 1 argument is supported: (data)"));
                 return promise.promise.get(1);
             }
-
             JSV js_data = JSV(ctx, &argumentValues[0]).cget(1).cset(1);
-
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
-            }
-
-            std::thread t([=]() {
-
-                BYTEBUFFER data = ToValue(ctx, js_data);
+            BYTEBUFFER data = ToValue(ctx, js_data);
+            AddAsyncTask(ctx, [=, data = std::move(data)]() mutable {
                 if (!BaseXToBinary(&data, 16, false)) {
-                    promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.decodeBase16] Failed to decoding data"));
+                    AddNativeTask(ctx, [=]() mutable {
+                        promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.decodeBase16] Failed to decoding data"));
+                        });
                     return;
                 }
-                promise.Resolve(ctx, NewUint8Array(ctx, data));
-                return;
-
+                AddNativeTask(ctx, [=]() mutable {
+                    promise.Resolve(ctx, NewUint8Array(ctx, data));
+                    });
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
-
             return promise.promise.get(1);
         }
-
         static JSValue bytebuffer_encodeBase91(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             Promise promise = NewPromise(ctx);
             if (argumentCount > 2) {
                 promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.encodeBase91] Only 1 or 2 arguments are supported: (data, isUrlEncoding?)"));
                 return promise.promise.get(1);
             }
-
             JSV js_data = JSV(ctx, &argumentValues[0]).cget(1).cset(1);
             JSV js_isUrlEncoding = (argumentCount == 2) ? JSV(ctx, &argumentValues[1]).cget(1).cset(1) : NewBool(ctx, false);
             bool isUrlEncoding = false;
@@ -10540,29 +10447,18 @@ namespace cjs {
                 promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.encodeBase91] The second argument must be a boolean"));
                 return promise.promise.get(1);
             }
-
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
-            }
-
-            std::thread t([=]() {
-
-                BYTEBUFFER data = ToValue(ctx, js_data);
+            BYTEBUFFER data = ToValue(ctx, js_data);
+            AddAsyncTask(ctx, [=, data = std::move(data)]() mutable {
                 if (!BinaryToBaseX(&data, 91, isUrlEncoding)) {
-                    promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.encodeBase91] Failed to encoding data"));
+                    AddNativeTask(ctx, [=]() mutable {
+                        promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.encodeBase91] Failed to encoding data"));
+                        });
                     return;
                 }
-                promise.Resolve(ctx, NewString(ctx, GetTextFromBinary(&data)));
-                return;
-
+                AddNativeTask(ctx, [=]() mutable {
+                    promise.Resolve(ctx, NewString(ctx, GetTextFromBinary(&data)));
+                    });
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
-
             return promise.promise.get(1);
         }
         static JSValue bytebuffer_encodeBase85(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -10571,31 +10467,19 @@ namespace cjs {
                 promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.encodeBase85] Only 1 argument is supported: (data)"));
                 return promise.promise.get(1);
             }
-
             JSV js_data = JSV(ctx, &argumentValues[0]).cget(1).cset(1);
-
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
-            }
-
-            std::thread t([=]() {
-
-                BYTEBUFFER data = ToValue(ctx, js_data);
+            BYTEBUFFER data = ToValue(ctx, js_data);
+            AddAsyncTask(ctx, [=, data = std::move(data)]() mutable {
                 if (!BinaryToBaseX(&data, 85, false)) {
-                    promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.encodeBase85] Failed to encoding data"));
+                    AddNativeTask(ctx, [=]() mutable {
+                        promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.encodeBase85] Failed to encoding data"));
+                        });
                     return;
                 }
-                promise.Resolve(ctx, NewString(ctx, GetTextFromBinary(&data)));
-                return;
-
+                AddNativeTask(ctx, [=]() mutable {
+                    promise.Resolve(ctx, NewString(ctx, GetTextFromBinary(&data)));
+                    });
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
-
             return promise.promise.get(1);
         }
         static JSValue bytebuffer_encodeBase64(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -10604,7 +10488,6 @@ namespace cjs {
                 promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.encodeBase64] Only 1 or 2 arguments are supported: (data, isUrlEncoding?)"));
                 return promise.promise.get(1);
             }
-
             JSV js_data = JSV(ctx, &argumentValues[0]).cget(1).cset(1);
             JSV js_isUrlEncoding = (argumentCount == 2) ? JSV(ctx, &argumentValues[1]).cget(1).cset(1) : NewBool(ctx, false);
             bool isUrlEncoding = false;
@@ -10612,29 +10495,18 @@ namespace cjs {
                 promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.encodeBase64] The second argument must be a boolean"));
                 return promise.promise.get(1);
             }
-
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
-            }
-
-            std::thread t([=]() {
-
-                BYTEBUFFER data = ToValue(ctx, js_data);
+            BYTEBUFFER data = ToValue(ctx, js_data);
+            AddAsyncTask(ctx, [=, data = std::move(data)]() mutable {
                 if (!BinaryToBaseX(&data, 64, isUrlEncoding)) {
-                    promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.encodeBase64] Failed to encoding data"));
+                    AddNativeTask(ctx, [=]() mutable {
+                        promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.encodeBase64] Failed to encoding data"));
+                        });
                     return;
                 }
-                promise.Resolve(ctx, NewString(ctx, GetTextFromBinary(&data)));
-                return;
-
+                AddNativeTask(ctx, [=]() mutable {
+                    promise.Resolve(ctx, NewString(ctx, GetTextFromBinary(&data)));
+                    });
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
-
             return promise.promise.get(1);
         }
         static JSValue bytebuffer_encodeBase62(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -10643,31 +10515,19 @@ namespace cjs {
                 promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.encodeBase62] Only 1 argument is supported: (data)"));
                 return promise.promise.get(1);
             }
-
             JSV js_data = JSV(ctx, &argumentValues[0]).cget(1).cset(1);
-
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
-            }
-
-            std::thread t([=]() {
-
-                BYTEBUFFER data = ToValue(ctx, js_data);
+            BYTEBUFFER data = ToValue(ctx, js_data);
+            AddAsyncTask(ctx, [=, data = std::move(data)]() mutable {
                 if (!BinaryToBaseX(&data, 62, false)) {
-                    promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.encodeBase62] Failed to encoding data"));
+                    AddNativeTask(ctx, [=]() mutable {
+                        promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.encodeBase62] Failed to encoding data"));
+                        });
                     return;
                 }
-                promise.Resolve(ctx, NewString(ctx, GetTextFromBinary(&data)));
-                return;
-
+                AddNativeTask(ctx, [=]() mutable {
+                    promise.Resolve(ctx, NewString(ctx, GetTextFromBinary(&data)));
+                    });
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
-
             return promise.promise.get(1);
         }
         static JSValue bytebuffer_encodeBase58(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -10676,31 +10536,19 @@ namespace cjs {
                 promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.encodeBase58] Only 1 argument is supported: (data)"));
                 return promise.promise.get(1);
             }
-
             JSV js_data = JSV(ctx, &argumentValues[0]).cget(1).cset(1);
-
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
-            }
-
-            std::thread t([=]() {
-
-                BYTEBUFFER data = ToValue(ctx, js_data);
+            BYTEBUFFER data = ToValue(ctx, js_data);
+            AddAsyncTask(ctx, [=, data = std::move(data)]() mutable {
                 if (!BinaryToBaseX(&data, 58, false)) {
-                    promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.encodeBase58] Failed to encoding data"));
+                    AddNativeTask(ctx, [=]() mutable {
+                        promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.encodeBase58] Failed to encoding data"));
+                        });
                     return;
                 }
-                promise.Resolve(ctx, NewString(ctx, GetTextFromBinary(&data)));
-                return;
-
+                AddNativeTask(ctx, [=]() mutable {
+                    promise.Resolve(ctx, NewString(ctx, GetTextFromBinary(&data)));
+                    });
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
-
             return promise.promise.get(1);
         }
         static JSValue bytebuffer_encodeBase32(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -10709,31 +10557,19 @@ namespace cjs {
                 promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.encodeBase32] Only 1 argument is supported: (data)"));
                 return promise.promise.get(1);
             }
-
             JSV js_data = JSV(ctx, &argumentValues[0]).cget(1).cset(1);
-
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
-            }
-
-            std::thread t([=]() {
-
-                BYTEBUFFER data = ToValue(ctx, js_data);
+            BYTEBUFFER data = ToValue(ctx, js_data);
+            AddAsyncTask(ctx, [=, data = std::move(data)]() mutable {
                 if (!BinaryToBaseX(&data, 32, false)) {
-                    promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.encodeBase32] Failed to encoding data"));
+                    AddNativeTask(ctx, [=]() mutable {
+                        promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.encodeBase32] Failed to encoding data"));
+                        });
                     return;
                 }
-                promise.Resolve(ctx, NewString(ctx, GetTextFromBinary(&data)));
-                return;
-
+                AddNativeTask(ctx, [=]() mutable {
+                    promise.Resolve(ctx, NewString(ctx, GetTextFromBinary(&data)));
+                    });
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
-
             return promise.promise.get(1);
         }
         static JSValue bytebuffer_encodeBase16(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -10742,34 +10578,21 @@ namespace cjs {
                 promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.encodeBase16] Only 1 argument is supported: (data)"));
                 return promise.promise.get(1);
             }
-
             JSV js_data = JSV(ctx, &argumentValues[0]).cget(1).cset(1);
-
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
-            }
-
-            std::thread t([=]() {
-
-                BYTEBUFFER data = ToValue(ctx, js_data);
+            BYTEBUFFER data = ToValue(ctx, js_data);
+            AddAsyncTask(ctx, [=, data = std::move(data)]() mutable {
                 if (!BinaryToBaseX(&data, 16, false)) {
-                    promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.encodeBase16] Failed to encoding data"));
+                    AddNativeTask(ctx, [=]() mutable {
+                        promise.Reject(ctx, NewInternalError(ctx, "[bytebuffer.encodeBase16] Failed to encoding data"));
+                        });
                     return;
                 }
-                promise.Resolve(ctx, NewString(ctx, GetTextFromBinary(&data)));
-                return;
-
+                AddNativeTask(ctx, [=]() mutable {
+                    promise.Resolve(ctx, NewString(ctx, GetTextFromBinary(&data)));
+                    });
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
-
             return promise.promise.get(1);
         }
-
         static JSValue bytebuffer_toBinary(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             Promise promise = NewPromise(ctx);
             if (argumentCount != 1) {
@@ -10785,15 +10608,12 @@ namespace cjs {
                 return JS_EXCEPTION;
             }
 
-            std::thread t([=]() {
-                promise.Resolve(ctx, NewUint8Array(ctx, ToValue(ctx, js_data)));
-                return;
+            BYTEBUFFER data = ToValue(ctx, js_data);
+            AddAsyncTask(ctx, [=, data = std::move(data)]() mutable {
+                AddNativeTask(ctx, [=]() mutable {
+                    promise.Resolve(ctx, NewUint8Array(ctx, data));
+                    });
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
-
             return promise.promise.get(1);
         }
         static JSValue bytebuffer_toString(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -10811,15 +10631,12 @@ namespace cjs {
                 return JS_EXCEPTION;
             }
 
-            std::thread t([=]() {
-                promise.Resolve(ctx, NewString(ctx, ToString(ctx, js_data)));
-                return;
+            BYTEBUFFER data = ToValue(ctx, js_data);
+            AddAsyncTask(ctx, [=, data = std::move(data)]() mutable {
+                AddNativeTask(ctx, [=]() mutable {
+                    promise.Resolve(ctx, NewString(ctx, ToString(ctx, js_data)));
+                    });
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
-
             return promise.promise.get(1);
         }
 
@@ -11048,7 +10865,9 @@ namespace cjs {
                 return JS_UNDEFINED;
             }
 
+            jsmdPtr->timeoutList.lock();
             jsmdPtr->timeoutList[id].shared = (void*)0x00000001;
+            jsmdPtr->timeoutList.unlock();
             return JS_UNDEFINED;
         }
         static JSValue global_setTimeout(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -11079,7 +10898,8 @@ namespace cjs {
 
             ULL id = GetNewTimeoutId(ctx);
 
-            std::thread t([=]() {
+            Thread td = {};
+            AddAsyncTask(ctx, [=]() {
 
                 JSMData* jsmdPtr = nullptr;
                 if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
@@ -11097,20 +10917,14 @@ namespace cjs {
                     AddNativeTask(ctx, [=]() {
                         CallFunction(ctx, js_callback, NewGlobalObject(ctx), {}, true, false);
                         });
-                   
                 }
 
                 jsmdPtr->timeoutList.erase(id);
-
-                });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
+                }, &td);
             jsmdPtr->timeoutList.lock();
             jsmdPtr->timeoutList[id].thread = td;
             jsmdPtr->timeoutList[id].shared = nullptr;
             jsmdPtr->timeoutList.unlock();
-            update(ctx);
 
             return NewUint64(ctx, id).get(1);
         }
@@ -12229,165 +12043,160 @@ namespace cjs {
                 RemoveAttribute(ctx, jsAlgorithm, key);
             }
 
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
-            }
-
             uint64_t length_capture = length_val;
             std::string a_name_capture = a_name;
             JSV uAlgorithm_capture = uAlgorithm;
             JSV uBaseKey_capture = uBaseKey;
 
-            std::thread t([=]() {
+            uint64_t length = length_capture;
+            std::string alg_name = a_name_capture;
+            JSV alg = uAlgorithm_capture;
+            JSV baseKey = uBaseKey_capture;
 
-                uint64_t length = length_capture;
-                std::string alg_name = a_name_capture;
-                JSV alg = uAlgorithm_capture;
-                JSV baseKey = uBaseKey_capture;
+            JSV jsKeyInternal = GetProperty(ctx, baseKey, "internal");
+            if (!jsKeyInternal.isValid()) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] Invalid CryptoKey object (missing internal data)"));
+                return promise.promise.get(1);
+            }
 
-                JSV jsKeyInternal = GetProperty(ctx, baseKey, "internal");
-                if (!jsKeyInternal.isValid()) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] Invalid CryptoKey object (missing internal data)"));
-                    return;
+            JSV jsKeyData = GetProperty(ctx, jsKeyInternal, "data");
+            BYTEBUFFER keyBinary;
+            if (!jsKeyData.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsKeyData, keyBinary)) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] Failed to read baseKey binary data"));
+                return promise.promise.get(1);
+            }
+
+            auto end = [=](const bool& deriveResult, const BYTEBUFFER& derivedBits) {
+                AddNativeTask(ctx, [=, deriveResult = std::move(deriveResult), derivedBits = std::move(derivedBits)] mutable {
+                    if (!deriveResult || derivedBits.empty()) {
+                        promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.deriveBits] Failed to derive bits with algorithm: " + alg_name));
+                        return;
+                    }
+                    promise.Resolve(ctx, NewArrayBuffer(ctx, derivedBits));
+                    });
+                };
+
+            if (alg_name == "PBKDF2") {
+                BYTEBUFFER saltBinary;
+                JSV jsSalt = GetProperty(ctx, alg, "salt");
+                if (!jsSalt.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsSalt, saltBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] PBKDF2 algorithm must have a valid 'salt' property"));
+                    return promise.promise.get(1);
                 }
 
-                JSV jsKeyData = GetProperty(ctx, jsKeyInternal, "data");
-                BYTEBUFFER keyBinary;
-                if (!jsKeyData.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsKeyData, keyBinary)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] Failed to read baseKey binary data"));
-                    return;
+                uint64_t iterations = 0;
+                JSV jsIterations = GetProperty(ctx, alg, "iterations");
+                if (!jsIterations.isValid() || !ReadJSValueAsUint64(ctx, jsIterations, iterations) || iterations == 0) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] PBKDF2 algorithm must have a positive 'iterations' property"));
+                    return promise.promise.get(1);
                 }
 
-                BYTEBUFFER derivedBits;
-                bool deriveResult = false;
-
-                if (alg_name == "PBKDF2") {
-                    BYTEBUFFER saltBinary;
-                    JSV jsSalt = GetProperty(ctx, alg, "salt");
-                    if (!jsSalt.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsSalt, saltBinary)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] PBKDF2 algorithm must have a valid 'salt' property"));
-                        return;
-                    }
-
-                    uint64_t iterations = 0;
-                    JSV jsIterations = GetProperty(ctx, alg, "iterations");
-                    if (!jsIterations.isValid() || !ReadJSValueAsUint64(ctx, jsIterations, iterations) || iterations == 0) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] PBKDF2 algorithm must have a positive 'iterations' property"));
-                        return;
-                    }
-
-                    std::string hashName = "SHA-256";
-                    JSV jsHash = GetProperty(ctx, alg, "hash");
-                    if (jsHash.isValid()) {
-                        JSV jsHashName = GetProperty(ctx, jsHash, "name");
-                        if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] PBKDF2 hash must have a valid 'name' property"));
-                            return;
-                        }
-                    }
-
-                    if (!hasLength) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] PBKDF2 requires the 'length' argument"));
-                        return;
-                    }
-
-                    deriveResult = crypto_subtle_deriveBits_PBKDF2(&keyBinary, &derivedBits, (size_t)length, &saltBinary, iterations, hashName);
-                }
-                else if (alg_name == "ECDH") {
-                    JSV jsPublicKey = GetProperty(ctx, alg, "public");
-                    if (!jsPublicKey.isValid()) jsPublicKey = GetProperty(ctx, uAlgorithm, "publicKey");
-                    if (!jsPublicKey.isValid() || !JS_IsObject(jsPublicKey.get()) || GetSymbolName(ctx, jsPublicKey) != "CryptoKey") {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] ECDH algorithm must have a valid 'public' or 'publicKey' property"));
-                        return;
-                    }
-
-                    JSV jsCurve = GetProperty(ctx, alg, "namedCurve");
-
-                    std::string curve = "P-256";
-                    ReadJSValueAsString(ctx, jsCurve, curve);
-
-                    JSV jsPubKeyInternal = GetProperty(ctx, jsPublicKey, "internal");
-                    JSV jsPubKeyData = GetProperty(ctx, jsPubKeyInternal, "data");
-                    BYTEBUFFER publicKeyBinary;
-                    if (!jsPubKeyData.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsPubKeyData, publicKeyBinary)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] Failed to read ECDH publicKey binary data"));
-                        return;
-                    }
-
-                    if (!hasLength) {
-                        JSV jsBaseKeyAlg = GetProperty(ctx, baseKey, "algorithm");
-                        JSV jsNamedCurve = GetProperty(ctx, jsBaseKeyAlg, "namedCurve");
-                        std::string curve = "";
-                        if (!jsNamedCurve.isValid() || !ReadJSValueAsString(ctx, jsNamedCurve, curve)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] ECDH baseKey algorithm must have a 'namedCurve' property"));
-                            return;
-                        }
-
-                        if (curve == "P-256") length = 256;
-                        else if (curve == "P-384") length = 384;
-                        else if (curve == "P-521") length = 521;
-                        else if (curve == "X25519") length = 256;
-                        else {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] Unsupported ECDH curve: " + curve));
-                            return;
-                        }
-                    }
-
-                    deriveResult = crypto_subtle_deriveBits_ECDH(&keyBinary, &derivedBits, (size_t)length, &publicKeyBinary, curve);
-                }
-                else if (alg_name == "HKDF") {
-                    std::string hashName = "";
-                    JSV jsHash = GetProperty(ctx, alg, "hash");
-                    if (!jsHash.isValid()) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] HKDF algorithm must have a 'hash' object property"));
-                        return;
-                    }
+                std::string hashName = "SHA-256";
+                JSV jsHash = GetProperty(ctx, alg, "hash");
+                if (jsHash.isValid()) {
                     JSV jsHashName = GetProperty(ctx, jsHash, "name");
                     if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] HKDF hash must have a valid 'name' property"));
-                        return;
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] PBKDF2 hash must have a valid 'name' property"));
+                        return promise.promise.get(1);
                     }
-
-                    BYTEBUFFER saltBinary;
-                    JSV jsSalt = GetProperty(ctx, alg, "salt");
-                    if (jsSalt.isValid() && !ReadJSValueAsArrayBufferView(ctx, jsSalt, saltBinary)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] HKDF 'salt' must be an ArrayBuffer/ArrayBufferView"));
-                        return;
-                    }
-
-                    BYTEBUFFER infoBinary;
-                    JSV jsInfo = GetProperty(ctx, alg, "info");
-                    if (jsInfo.isValid() && !ReadJSValueAsArrayBufferView(ctx, jsInfo, infoBinary)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] HKDF 'info' must be an ArrayBuffer/ArrayBufferView"));
-                        return;
-                    }
-
-                    if (!hasLength) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] HKDF requires the 'length' argument"));
-                        return;
-                    }
-
-                    deriveResult = crypto_subtle_deriveBits_HKDF(&keyBinary, &derivedBits, (size_t)length, &infoBinary, hashName, &saltBinary);
-                }
-                else {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] Unsupported algorithm: " + alg_name));
-                    return;
                 }
 
-                if (!deriveResult || derivedBits.empty()) {
-                    promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.deriveBits] Failed to derive bits with algorithm: " + alg_name));
-                    return;
+                if (!hasLength) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] PBKDF2 requires the 'length' argument"));
+                    return promise.promise.get(1);
                 }
 
-                promise.Resolve(ctx, NewArrayBuffer(ctx, derivedBits));
-                });
+                AddAsyncTask(ctx, [=, keyBinary = std::move(keyBinary), saltBinary = std::move(saltBinary)]() mutable {
+                    BYTEBUFFER derivedBits = {};
+                    end(crypto_subtle_deriveBits_PBKDF2(&keyBinary, &derivedBits, (size_t)length, &saltBinary, iterations, hashName), derivedBits);
+                    });
+            }
+            else if (alg_name == "ECDH") {
+                JSV jsPublicKey = GetProperty(ctx, alg, "public");
+                if (!jsPublicKey.isValid()) jsPublicKey = GetProperty(ctx, uAlgorithm, "publicKey");
+                if (!jsPublicKey.isValid() || !JS_IsObject(jsPublicKey.get()) || GetSymbolName(ctx, jsPublicKey) != "CryptoKey") {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] ECDH algorithm must have a valid 'public' or 'publicKey' property"));
+                    return promise.promise.get(1);
+                }
 
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
+                JSV jsCurve = GetProperty(ctx, alg, "namedCurve");
+
+                std::string curve = "P-256";
+                ReadJSValueAsString(ctx, jsCurve, curve);
+
+                JSV jsPubKeyInternal = GetProperty(ctx, jsPublicKey, "internal");
+                JSV jsPubKeyData = GetProperty(ctx, jsPubKeyInternal, "data");
+                BYTEBUFFER publicKeyBinary;
+                if (!jsPubKeyData.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsPubKeyData, publicKeyBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] Failed to read ECDH publicKey binary data"));
+                    return promise.promise.get(1);
+                }
+
+                if (!hasLength) {
+                    JSV jsBaseKeyAlg = GetProperty(ctx, baseKey, "algorithm");
+                    JSV jsNamedCurve = GetProperty(ctx, jsBaseKeyAlg, "namedCurve");
+                    std::string curve = "";
+                    if (!jsNamedCurve.isValid() || !ReadJSValueAsString(ctx, jsNamedCurve, curve)) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] ECDH baseKey algorithm must have a 'namedCurve' property"));
+                        return promise.promise.get(1);
+                    }
+
+                    if (curve == "P-256") length = 256;
+                    else if (curve == "P-384") length = 384;
+                    else if (curve == "P-521") length = 521;
+                    else if (curve == "X25519") length = 256;
+                    else {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] Unsupported ECDH curve: " + curve));
+                        return promise.promise.get(1);
+                    }
+                }
+
+                AddAsyncTask(ctx, [=, keyBinary = std::move(keyBinary), publicKeyBinary = std::move(publicKeyBinary)]() mutable {
+                    BYTEBUFFER derivedBits = {};
+                    end(crypto_subtle_deriveBits_ECDH(&keyBinary, &derivedBits, (size_t)length, &publicKeyBinary, curve), derivedBits);
+                    });
+            }
+            else if (alg_name == "HKDF") {
+                std::string hashName = "";
+                JSV jsHash = GetProperty(ctx, alg, "hash");
+                if (!jsHash.isValid()) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] HKDF algorithm must have a 'hash' object property"));
+                    return promise.promise.get(1);
+                }
+                JSV jsHashName = GetProperty(ctx, jsHash, "name");
+                if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] HKDF hash must have a valid 'name' property"));
+                    return promise.promise.get(1);
+                }
+
+                BYTEBUFFER saltBinary;
+                JSV jsSalt = GetProperty(ctx, alg, "salt");
+                if (jsSalt.isValid() && !ReadJSValueAsArrayBufferView(ctx, jsSalt, saltBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] HKDF 'salt' must be an ArrayBuffer/ArrayBufferView"));
+                    return promise.promise.get(1);
+                }
+
+                BYTEBUFFER infoBinary;
+                JSV jsInfo = GetProperty(ctx, alg, "info");
+                if (jsInfo.isValid() && !ReadJSValueAsArrayBufferView(ctx, jsInfo, infoBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] HKDF 'info' must be an ArrayBuffer/ArrayBufferView"));
+                    return promise.promise.get(1);
+                }
+
+                if (!hasLength) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] HKDF requires the 'length' argument"));
+                    return promise.promise.get(1);
+                }
+
+                AddAsyncTask(ctx, [=, keyBinary = std::move(keyBinary), infoBinary = std::move(infoBinary), saltBinary = std::move(saltBinary)]() mutable {
+                    BYTEBUFFER derivedBits = {};
+                    end(crypto_subtle_deriveBits_HKDF(&keyBinary, &derivedBits, (size_t)length, &infoBinary, hashName, &saltBinary), derivedBits);
+                    });
+            }
+            else {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveBits] Unsupported algorithm: " + alg_name));
+                return promise.promise.get(1);
+            }
 
             return promise.promise.get(1);
         }
@@ -12521,163 +12330,171 @@ namespace cjs {
                 RemoveAttribute(ctx, jsAlgorithm, key);
             }
 
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
+            std::string a_name_capture = a_name;
+            JSV uAlgorithm_capture = uAlgorithm;
+            JSV uBaseKey_capture = uBaseKey;
+            JSV uDerivedKeyAlgorithm_capture = uDerivedKeyAlgorithm;
+            bool extractable_capture = extractable;
+            std::vector<std::string> derivedKeyUsages_capture = derivedKeyUsages;
+
+            std::string alg_name = a_name_capture;
+            JSV alg = uAlgorithm_capture;
+            JSV baseKey = uBaseKey_capture;
+            JSV derivedKeyAlg = uDerivedKeyAlgorithm_capture;
+
+            JSV jsKeyInternal = GetProperty(ctx, baseKey, "internal");
+            if (!jsKeyInternal.isValid()) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] Invalid base CryptoKey object"));
+                return promise.promise.get(1);
             }
 
-            std::thread t([=]() {
-                JSV jsKeyInternal = GetProperty(ctx, uBaseKey, "internal");
-                if (!jsKeyInternal.isValid()) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] Invalid base CryptoKey object"));
-                    return;
-                }
+            JSV jsKeyData = GetProperty(ctx, jsKeyInternal, "data");
+            BYTEBUFFER keyBinary = {};
+            if (!jsKeyData.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsKeyData, keyBinary)) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] Failed to read base key data"));
+                return promise.promise.get(1);
+            }
 
-                JSV jsKeyData = GetProperty(ctx, jsKeyInternal, "data");
-                BYTEBUFFER keyBinary = {};
-                if (!jsKeyData.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsKeyData, keyBinary)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] Failed to read base key data"));
-                    return;
+            JSV jsDerivedAlgLength = GetProperty(ctx, derivedKeyAlg, "length");
+            uint64_t derivedLength = 0;
+            if (jsDerivedAlgLength.isValid()) {
+                if (!ReadJSValueAsUint64(ctx, jsDerivedAlgLength, derivedLength) || derivedLength == 0 || derivedLength % 8 != 0) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] Derived key length must be a positive multiple of 8"));
+                    return promise.promise.get(1);
                 }
-
-                JSV jsDerivedAlgLength = GetProperty(ctx, uDerivedKeyAlgorithm, "length");
-                uint64_t derivedLength = 0;
-                if (jsDerivedAlgLength.isValid()) {
-                    if (!ReadJSValueAsUint64(ctx, jsDerivedAlgLength, derivedLength) || derivedLength == 0 || derivedLength % 8 != 0) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] Derived key length must be a positive multiple of 8"));
-                        return;
-                    }
+            }
+            else {
+                if (derivedAlgName == "AES-CBC" || derivedAlgName == "AES-GCM" || derivedAlgName == "AES-CTR" || derivedAlgName == "AES-KW") {
+                    derivedLength = 256;
+                }
+                else if (derivedAlgName == "HMAC") {
+                    derivedLength = 256;
                 }
                 else {
-                    if (derivedAlgName == "AES-CBC" || derivedAlgName == "AES-GCM" || derivedAlgName == "AES-CTR" || derivedAlgName == "AES-KW") {
-                        derivedLength = 256;
-                    }
-                    else if (derivedAlgName == "HMAC") {
-                        derivedLength = 256;
-                    }
-                    else {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] Derived key algorithm requires explicit length"));
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] Derived key algorithm requires explicit length"));
+                    return promise.promise.get(1);
+                }
+            }
+
+            auto end = [=](const bool& deriveResult, const BYTEBUFFER& derivedKey) {
+                AddNativeTask(ctx, [=, deriveResult = std::move(deriveResult), derivedKey = std::move(derivedKey)] mutable {
+                    if (!deriveResult || derivedKey.empty()) {
+                        promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.deriveKey] Failed to derive key with " + alg_name));
                         return;
+                    }
+                    JSV cryptoKey = NewObject(ctx);
+                    SetSymbolName(ctx, cryptoKey, "CryptoKey");
+
+                    SetAttribute(ctx, cryptoKey, "type", "secret", 0);
+                    SetAttribute(ctx, cryptoKey, "algorithm", derivedKeyAlg, 0);
+                    SetAttribute(ctx, cryptoKey, "extractable", NewBool(ctx, extractable_capture), 0);
+
+                    std::vector<JSV> jUsages;
+                    for (const std::string& usage : derivedKeyUsages_capture) {
+                        jUsages.push_back(NewString(ctx, usage));
+                    }
+                    JSV uUsages = NewArray(ctx, jUsages);
+                    SetAttribute(ctx, cryptoKey, "usages", uUsages, 0);
+
+                    JSV privateObject = NewObject(ctx);
+                    JSV data = NewUint8Array(ctx, derivedKey);
+                    SetAttribute(ctx, privateObject, "data", data, 0);
+                    SetAttribute(ctx, privateObject, "_isPrivate", NewBool(ctx, true), 0);
+                    SetAttribute(ctx, cryptoKey, "internal", privateObject, 0);
+
+                    promise.Resolve(ctx, cryptoKey);
+                    });
+                };
+
+            if (a_name == "PBKDF2") {
+                BYTEBUFFER saltBinary = {};
+                JSV jsSalt = GetProperty(ctx, alg, "salt");
+                if (!jsSalt.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsSalt, saltBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] PBKDF2 algorithm must have a valid 'salt' property"));
+                    return promise.promise.get(1);
+                }
+
+                uint64_t iterations = 0;
+                JSV jsIterations = GetProperty(ctx, alg, "iterations");
+                if (!jsIterations.isValid() || !ReadJSValueAsUint64(ctx, jsIterations, iterations) || iterations == 0) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] PBKDF2 algorithm must have a valid positive 'iterations' property"));
+                    return promise.promise.get(1);
+                }
+
+                std::string hashName = "SHA-256";
+                JSV jsHash = GetProperty(ctx, alg, "hash");
+                if (jsHash.isValid()) {
+                    JSV jsHashName = GetProperty(ctx, jsHash, "name");
+                    if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] PBKDF2 must have a valid hash algorithm"));
+                        return promise.promise.get(1);
                     }
                 }
 
-                BYTEBUFFER derivedKey = {};
-                bool deriveResult = false;
-
-                if (a_name == "PBKDF2") {
-                    BYTEBUFFER saltBinary = {};
-                    JSV jsSalt = GetProperty(ctx, uAlgorithm, "salt");
-                    if (!jsSalt.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsSalt, saltBinary)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] PBKDF2 algorithm must have a valid 'salt' property"));
-                        return;
-                    }
-
-                    uint64_t iterations = 0;
-                    JSV jsIterations = GetProperty(ctx, uAlgorithm, "iterations");
-                    if (!jsIterations.isValid() || !ReadJSValueAsUint64(ctx, jsIterations, iterations) || iterations == 0) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] PBKDF2 algorithm must have a valid positive 'iterations' property"));
-                        return;
-                    }
-
-                    std::string hashName = "SHA-256";
-                    JSV jsHash = GetProperty(ctx, uAlgorithm, "hash");
-                    if (jsHash.isValid()) {
-                        JSV jsHashName = GetProperty(ctx, jsHash, "name");
-                        if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] PBKDF2 must have a valid hash algorithm"));
-                            return;
-                        }
-                    }
-
-                    deriveResult = crypto_subtle_deriveKey_PBKDF2(&keyBinary, &derivedKey, derivedLength, &saltBinary, iterations, hashName);
-                }
-                else if (a_name == "ECDH") {
-                    JSV jsPublicKey = GetProperty(ctx, uAlgorithm, "public");
-                    if (!jsPublicKey.isValid()) jsPublicKey = GetProperty(ctx, uAlgorithm, "publicKey");
-                    if (!jsPublicKey.isValid() || !JS_IsObject(jsPublicKey.get()) || GetSymbolName(ctx, jsPublicKey) != "CryptoKey") {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] ECDH algorithm must have a valid 'public' or 'publicKey' CryptoKey property"));
-                        return;
-                    }
-
-                    JSV jsPublicKeyInternal = GetProperty(ctx, jsPublicKey, "internal");
-                    JSV jsPublicKeyData = GetProperty(ctx, jsPublicKeyInternal, "data");
-                    BYTEBUFFER publicKeyBinary = {};
-                    if (!jsPublicKeyData.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsPublicKeyData, publicKeyBinary)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] ECDH public key data is invalid"));
-                        return;
-                    }
-
-                    JSV jsBaseKeyAlgorithm = GetProperty(ctx, uBaseKey, "algorithm");
-                    std::string curve = "";
-                    JSV jsKeyAlgCurve = GetProperty(ctx, jsBaseKeyAlgorithm, "namedCurve");
-                    if (!jsKeyAlgCurve.isValid() || !ReadJSValueAsString(ctx, jsKeyAlgCurve, curve) || !allowedCurveName.count(curve)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] ECDH base key must have a valid 'namedCurve' property"));
-                        return;
-                    }
-
-                    deriveResult = crypto_subtle_deriveKey_ECDH(&keyBinary, &derivedKey, derivedLength, &publicKeyBinary, curve);
-                }
-                else if (a_name == "HKDF") {
-                    std::string hashName = "SHA-256";
-                    JSV jsHash = GetProperty(ctx, uAlgorithm, "hash");
-                    if (jsHash.isValid()) {
-                        JSV jsHashName = GetProperty(ctx, jsHash, "name");
-                        if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] HKDF must have a valid hash algorithm"));
-                            return;
-                        }
-                    }
-
-                    BYTEBUFFER saltBinary = {};
-                    JSV jsSalt = GetProperty(ctx, uAlgorithm, "salt");
-                    if (jsSalt.isValid() && !ReadJSValueAsArrayBufferView(ctx, jsSalt, saltBinary)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] HKDF salt must be a ArrayBuffer or ArrayBufferView"));
-                        return;
-                    }
-
-                    BYTEBUFFER infoBinary = {};
-                    JSV jsInfo = GetProperty(ctx, uAlgorithm, "info");
-                    if (jsInfo.isValid() && !ReadJSValueAsArrayBufferView(ctx, jsInfo, infoBinary)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] HKDF info must be a ArrayBuffer or ArrayBufferView"));
-                        return;
-                    }
-
-                    deriveResult = crypto_subtle_deriveKey_HKDF(&keyBinary, &derivedKey, derivedLength, &infoBinary, hashName, &saltBinary);
+                AddAsyncTask(ctx, [=, keyBinary = std::move(keyBinary), saltBinary = std::move(saltBinary)]() mutable {
+                    BYTEBUFFER derivedKey = {};
+                    end(crypto_subtle_deriveKey_PBKDF2(&keyBinary, &derivedKey, derivedLength, &saltBinary, iterations, hashName), derivedKey);
+                    });
+            }
+            else if (a_name == "ECDH") {
+                JSV jsPublicKey = GetProperty(ctx, alg, "public");
+                if (!jsPublicKey.isValid()) jsPublicKey = GetProperty(ctx, alg, "publicKey");
+                if (!jsPublicKey.isValid() || !JS_IsObject(jsPublicKey.get()) || GetSymbolName(ctx, jsPublicKey) != "CryptoKey") {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] ECDH algorithm must have a valid 'public' or 'publicKey' CryptoKey property"));
+                    return promise.promise.get(1);
                 }
 
-                if (!deriveResult || derivedKey.empty()) {
-                    promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.deriveKey] Failed to derive key with " + a_name));
-                    return;
+                JSV jsPublicKeyInternal = GetProperty(ctx, jsPublicKey, "internal");
+                JSV jsPublicKeyData = GetProperty(ctx, jsPublicKeyInternal, "data");
+                BYTEBUFFER publicKeyBinary = {};
+                if (!jsPublicKeyData.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsPublicKeyData, publicKeyBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] ECDH public key data is invalid"));
+                    return promise.promise.get(1);
                 }
 
-                JSV cryptoKey = NewObject(ctx);
-                SetSymbolName(ctx, cryptoKey, "CryptoKey");
-
-                SetAttribute(ctx, cryptoKey, "type", "secret", 0);
-                SetAttribute(ctx, cryptoKey, "algorithm", uDerivedKeyAlgorithm, 0);
-                SetAttribute(ctx, cryptoKey, "extractable", NewBool(ctx, extractable), 0);
-
-                std::vector<JSV> jUsages;
-                for (const std::string& usage : derivedKeyUsages) {
-                    jUsages.push_back(NewString(ctx, usage));
+                JSV jsBaseKeyAlgorithm = GetProperty(ctx, baseKey, "algorithm");
+                std::string curve = "";
+                JSV jsKeyAlgCurve = GetProperty(ctx, jsBaseKeyAlgorithm, "namedCurve");
+                if (!jsKeyAlgCurve.isValid() || !ReadJSValueAsString(ctx, jsKeyAlgCurve, curve) || !allowedCurveName.count(curve)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] ECDH base key must have a valid 'namedCurve' property"));
+                    return promise.promise.get(1);
                 }
-                JSV uUsages = NewArray(ctx, jUsages);
-                SetAttribute(ctx, cryptoKey, "usages", uUsages, 0);
 
-                JSV privateObject = NewObject(ctx);
-                JSV data = NewUint8Array(ctx, derivedKey);
-                SetAttribute(ctx, privateObject, "data", data, 0);
-                SetAttribute(ctx, privateObject, "_isPrivate", NewBool(ctx, true), 0);
-                SetAttribute(ctx, cryptoKey, "internal", privateObject, 0);
+                AddAsyncTask(ctx, [=, keyBinary = std::move(keyBinary), publicKeyBinary = std::move(publicKeyBinary)]() mutable {
+                    BYTEBUFFER derivedKey = {};
+                    end(crypto_subtle_deriveKey_ECDH(&keyBinary, &derivedKey, derivedLength, &publicKeyBinary, curve), derivedKey);
+                    });
+            }
+            else if (a_name == "HKDF") {
+                std::string hashName = "SHA-256";
+                JSV jsHash = GetProperty(ctx, alg, "hash");
+                if (jsHash.isValid()) {
+                    JSV jsHashName = GetProperty(ctx, jsHash, "name");
+                    if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] HKDF must have a valid hash algorithm"));
+                        return promise.promise.get(1);
+                    }
+                }
 
-                promise.Resolve(ctx, cryptoKey);
-                });
+                BYTEBUFFER saltBinary = {};
+                JSV jsSalt = GetProperty(ctx, alg, "salt");
+                if (jsSalt.isValid() && !ReadJSValueAsArrayBufferView(ctx, jsSalt, saltBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] HKDF salt must be a ArrayBuffer or ArrayBufferView"));
+                    return promise.promise.get(1);
+                }
 
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
+                BYTEBUFFER infoBinary = {};
+                JSV jsInfo = GetProperty(ctx, alg, "info");
+                if (jsInfo.isValid() && !ReadJSValueAsArrayBufferView(ctx, jsInfo, infoBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] HKDF info must be a ArrayBuffer or ArrayBufferView"));
+                    return promise.promise.get(1);
+                }
+
+                AddAsyncTask(ctx, [=, keyBinary = std::move(keyBinary), infoBinary = std::move(infoBinary), saltBinary = std::move(saltBinary)]() mutable {
+                    BYTEBUFFER derivedKey = {};
+                    end(crypto_subtle_deriveKey_HKDF(&keyBinary, &derivedKey, derivedLength, &infoBinary, hashName, &saltBinary), derivedKey);
+                    });
+            }
 
             return promise.promise.get(1);
         }
@@ -12781,104 +12598,113 @@ namespace cjs {
                 RemoveAttribute(ctx, jsAlgorithm, key);
             }
 
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
+            std::string a_name_capture = a_name;
+            JSV uAlgorithm_capture = uAlgorithm;
+            JSV uKey_capture = uKey;
+            JSV uData_capture = uData;
+
+            std::string alg_name = a_name_capture;
+            JSV alg = uAlgorithm_capture;
+            JSV key = uKey_capture;
+            JSV dataJSV = uData_capture;
+
+            BYTEBUFFER data = {};
+            if (!ReadJSValueAsArrayBufferView(ctx, dataJSV, data)) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.sign] The data must be a ArrayBuffer or ArrayBufferView"));
+                return promise.promise.get(1);
             }
 
-            std::thread t([=]() {
-                BYTEBUFFER data = {};
-                if (!ReadJSValueAsArrayBufferView(ctx, uData, data)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.sign] The data must be a ArrayBuffer or ArrayBufferView"));
-                    return;
-                }
+            JSV jsKeyInternal = GetProperty(ctx, key, "internal");
+            if (!jsKeyInternal.isValid()) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.sign] Invalid CryptoKey object"));
+                return promise.promise.get(1);
+            }
 
-                JSV jsKeyInternal = GetProperty(ctx, uKey, "internal");
-                if (!jsKeyInternal.isValid()) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.sign] Invalid CryptoKey object"));
-                    return;
-                }
+            JSV jsKeyData = GetProperty(ctx, jsKeyInternal, "data");
+            BYTEBUFFER keyBinary = {};
+            if (!jsKeyData.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsKeyData, keyBinary)) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.sign] Failed to read key data"));
+                return promise.promise.get(1);
+            }
 
-                JSV jsKeyData = GetProperty(ctx, jsKeyInternal, "data");
-                BYTEBUFFER keyBinary = {};
-                if (!jsKeyData.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsKeyData, keyBinary)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.sign] Failed to read key data"));
-                    return;
-                }
-
-                BYTEBUFFER signature = {};
-                bool signResult = false;
-
-                if (a_name == "RSA-PSS") {
-                    std::string hashName = "SHA-256";
-                    JSV jsHash = GetProperty(ctx, uAlgorithm, "hash");
-                    if (jsHash.isValid()) {
-                        JSV jsHashName = GetProperty(ctx, jsHash, "name");
-                        if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.sign] RSA-PSS must have a valid hash algorithm"));
-                            return;
-                        }
+            auto end = [=](const bool& signResult, const BYTEBUFFER& signature) {
+                AddNativeTask(ctx, [=, signResult = std::move(signResult), signature = std::move(signature)] mutable {
+                    if (!signResult) {
+                        promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.sign] Failed to sign data with " + alg_name));
+                        return;
                     }
-                    signResult = crypto_subtle_sign_RSA_PSS(&data, &keyBinary, &signature, hashName);
-                }
-                else if (a_name == "RSASSA-PKCS1-v1_5") {
-                    std::string hashName = "SHA-256";
-                    JSV jsHash = GetProperty(ctx, uAlgorithm, "hash");
-                    if (jsHash.isValid()) {
-                        JSV jsHashName = GetProperty(ctx, jsHash, "name");
-                        if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.sign] RSASSA-PKCS1-v1_5 must have a valid hash algorithm"));
-                            return;
-                        }
-                    }
-                    signResult = crypto_subtle_sign_RSA_PKCS1_v1_5(&data, &keyBinary, &signature, hashName);
-                }
-                else if (a_name == "ECDSA") {
-                    std::string hashName = "SHA-256";
-                    JSV jsHash = GetProperty(ctx, uAlgorithm, "hash");
-                    if (jsHash.isValid()) {
-                        JSV jsHashName = GetProperty(ctx, jsHash, "name");
-                        if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.sign] ECDSA must have a valid hash algorithm"));
-                            return;
-                        }
-                    }
-                    std::string curve = "P-256";
-                    JSV jsCurve = GetProperty(ctx, uAlgorithm, "namedCurve");
-                    if (jsCurve.isValid()) {
-                        if (!ReadJSValueAsString(ctx, jsCurve, curve) || !allowedCurveName.count(curve)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.sign] ECDSA must have a valid namedCurve"));
-                            return;
-                        }
-                    }
-                    signResult = crypto_subtle_sign_ECDSA(&data, &keyBinary, &signature, hashName, curve);
-                }
-                else if (a_name == "HMAC") {
-                    std::string hashName = "SHA-256";
-                    JSV jsHash = GetProperty(ctx, uAlgorithm, "hash");
-                    if (jsHash.isValid()) {
-                        JSV jsHashName = GetProperty(ctx, jsHash, "name");
-                        if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.sign] HMAC must have a valid hash algorithm"));
-                            return;
-                        }
-                    }
-                    signResult = crypto_subtle_sign_HMAC(&data, &keyBinary, &signature, hashName);
-                }
+                    promise.Resolve(ctx, NewArrayBuffer(ctx, signature));
+                    });
+                };
 
-                if (!signResult) {
-                    promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.sign] Failed to sign data with " + a_name));
-                    return;
+            if (a_name == "RSA-PSS") {
+                std::string hashName = "SHA-256";
+                JSV jsHash = GetProperty(ctx, alg, "hash");
+                if (jsHash.isValid()) {
+                    JSV jsHashName = GetProperty(ctx, jsHash, "name");
+                    if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.sign] RSA-PSS must have a valid hash algorithm"));
+                        return promise.promise.get(1);
+                    }
                 }
-
-                promise.Resolve(ctx, NewArrayBuffer(ctx, signature));
-                });
-
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
+                AddAsyncTask(ctx, [=, data = std::move(data), keyBinary = std::move(keyBinary)]() mutable {
+                    BYTEBUFFER signature = {};
+                    end(crypto_subtle_sign_RSA_PSS(&data, &keyBinary, &signature, hashName), signature);
+                    });
+            }
+            else if (a_name == "RSASSA-PKCS1-v1_5") {
+                std::string hashName = "SHA-256";
+                JSV jsHash = GetProperty(ctx, alg, "hash");
+                if (jsHash.isValid()) {
+                    JSV jsHashName = GetProperty(ctx, jsHash, "name");
+                    if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.sign] RSASSA-PKCS1-v1_5 must have a valid hash algorithm"));
+                        return promise.promise.get(1);
+                    }
+                }
+                AddAsyncTask(ctx, [=, data = std::move(data), keyBinary = std::move(keyBinary)]() mutable {
+                    BYTEBUFFER signature = {};
+                    end(crypto_subtle_sign_RSA_PKCS1_v1_5(&data, &keyBinary, &signature, hashName), signature);
+                    });
+            }
+            else if (a_name == "ECDSA") {
+                std::string hashName = "SHA-256";
+                JSV jsHash = GetProperty(ctx, alg, "hash");
+                if (jsHash.isValid()) {
+                    JSV jsHashName = GetProperty(ctx, jsHash, "name");
+                    if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.sign] ECDSA must have a valid hash algorithm"));
+                        return promise.promise.get(1);
+                    }
+                }
+                std::string curve = "P-256";
+                JSV jsCurve = GetProperty(ctx, alg, "namedCurve");
+                if (jsCurve.isValid()) {
+                    if (!ReadJSValueAsString(ctx, jsCurve, curve) || !allowedCurveName.count(curve)) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.sign] ECDSA must have a valid namedCurve"));
+                        return promise.promise.get(1);
+                    }
+                }
+                AddAsyncTask(ctx, [=, data = std::move(data), keyBinary = std::move(keyBinary)]() mutable {
+                    BYTEBUFFER signature = {};
+                    end(crypto_subtle_sign_ECDSA(&data, &keyBinary, &signature, hashName, curve), signature);
+                    });
+            }
+            else if (a_name == "HMAC") {
+                std::string hashName = "SHA-256";
+                JSV jsHash = GetProperty(ctx, alg, "hash");
+                if (jsHash.isValid()) {
+                    JSV jsHashName = GetProperty(ctx, jsHash, "name");
+                    if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.sign] HMAC must have a valid hash algorithm"));
+                        return promise.promise.get(1);
+                    }
+                }
+                AddAsyncTask(ctx, [=, data = std::move(data), keyBinary = std::move(keyBinary)]() mutable {
+                    BYTEBUFFER signature = {};
+                    end(crypto_subtle_sign_HMAC(&data, &keyBinary, &signature, hashName), signature);
+                    });
+            }
 
             return promise.promise.get(1);
         }
@@ -12985,104 +12811,105 @@ namespace cjs {
                 RemoveAttribute(ctx, jsAlgorithm, key);
             }
 
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
+            BYTEBUFFER signature;
+            if (!ReadJSValueAsArrayBufferView(ctx, uSignature, signature)) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.verify] The signature must be a ArrayBuffer or ArrayBufferView"));
+                return promise.promise.get(1);
             }
 
-            std::thread t([=]() {
-                BYTEBUFFER signature = {};
-                if (!ReadJSValueAsArrayBufferView(ctx, uSignature, signature)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.verify] The signature must be a ArrayBuffer or ArrayBufferView"));
-                    return;
-                }
+            BYTEBUFFER data;
+            if (!ReadJSValueAsArrayBufferView(ctx, uData, data)) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.verify] The data must be a ArrayBuffer or ArrayBufferView"));
+                return promise.promise.get(1);
+            }
 
-                BYTEBUFFER data = {};
-                if (!ReadJSValueAsArrayBufferView(ctx, uData, data)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.verify] The data must be a ArrayBuffer or ArrayBufferView"));
-                    return;
-                }
+            JSV jsKeyInternal = GetProperty(ctx, uKey, "internal");
+            if (!jsKeyInternal.isValid()) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.verify] Invalid CryptoKey object"));
+                return promise.promise.get(1);
+            }
 
-                JSV jsKeyInternal = GetProperty(ctx, uKey, "internal");
-                if (!jsKeyInternal.isValid()) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.verify] Invalid CryptoKey object"));
-                    return;
-                }
+            JSV jsKeyData = GetProperty(ctx, jsKeyInternal, "data");
+            BYTEBUFFER keyBinary;
+            if (!jsKeyData.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsKeyData, keyBinary)) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.verify] Failed to read key data"));
+                return promise.promise.get(1);
+            }
 
-                JSV jsKeyData = GetProperty(ctx, jsKeyInternal, "data");
-                BYTEBUFFER keyBinary = {};
-                if (!jsKeyData.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsKeyData, keyBinary)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.verify] Failed to read key data"));
-                    return;
-                }
+            auto end = [=](const bool& verifyResult) {
+                AddNativeTask(ctx, [=, verifyResult = std::move(verifyResult)] mutable {
+                    promise.Resolve(ctx, JS_NewBool(ctx, verifyResult));
+                    });
+                };
 
-                bool verifyResult = false;
-
-                if (a_name == "RSA-PSS") {
-                    std::string hashName = "SHA-256";
-                    JSV jsHash = GetProperty(ctx, uAlgorithm, "hash");
-                    if (jsHash.isValid()) {
-                        JSV jsHashName = GetProperty(ctx, jsHash, "name");
-                        if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.verify] RSA-PSS must have a valid hash algorithm"));
-                            return;
-                        }
+            if (a_name == "RSA-PSS") {
+                std::string hashName = "SHA-256";
+                JSV jsHash = GetProperty(ctx, uAlgorithm, "hash");
+                if (jsHash.isValid()) {
+                    JSV jsHashName = GetProperty(ctx, jsHash, "name");
+                    if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.verify] RSA-PSS must have a valid hash algorithm"));
+                        return promise.promise.get(1);
                     }
-                    verifyResult = crypto_subtle_verify_RSA_PSS(&data, &keyBinary, &signature, hashName);
                 }
-                else if (a_name == "RSASSA-PKCS1-v1_5") {
-                    std::string hashName = "SHA-256";
-                    JSV jsHash = GetProperty(ctx, uAlgorithm, "hash");
-                    if (jsHash.isValid()) {
-                        JSV jsHashName = GetProperty(ctx, jsHash, "name");
-                        if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.verify] RSASSA-PKCS1-v1_5 must have a valid hash algorithm"));
-                            return;
-                        }
+                AddAsyncTask(ctx, [=, data = std::move(data), keyBinary = std::move(keyBinary), signature = std::move(signature)]() mutable {
+                    bool verifyResult = crypto_subtle_verify_RSA_PSS(&data, &keyBinary, &signature, hashName);
+                    end(verifyResult);
+                    });
+            }
+            else if (a_name == "RSASSA-PKCS1-v1_5") {
+                std::string hashName = "SHA-256";
+                JSV jsHash = GetProperty(ctx, uAlgorithm, "hash");
+                if (jsHash.isValid()) {
+                    JSV jsHashName = GetProperty(ctx, jsHash, "name");
+                    if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.verify] RSASSA-PKCS1-v1_5 must have a valid hash algorithm"));
+                        return promise.promise.get(1);
                     }
-                    verifyResult = crypto_subtle_verify_RSA_PKCS1_v1_5(&data, &keyBinary, &signature, hashName);
                 }
-                else if (a_name == "ECDSA") {
-                    std::string hashName = "SHA-256";
-                    JSV jsHash = GetProperty(ctx, uAlgorithm, "hash");
-                    if (jsHash.isValid()) {
-                        JSV jsHashName = GetProperty(ctx, jsHash, "name");
-                        if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.verify] ECDSA must have a valid hash algorithm"));
-                            return;
-                        }
+                AddAsyncTask(ctx, [=, data = std::move(data), keyBinary = std::move(keyBinary), signature = std::move(signature)]() mutable {
+                    bool verifyResult = crypto_subtle_verify_RSA_PKCS1_v1_5(&data, &keyBinary, &signature, hashName);
+                    end(verifyResult);
+                    });
+            }
+            else if (a_name == "ECDSA") {
+                std::string hashName = "SHA-256";
+                JSV jsHash = GetProperty(ctx, uAlgorithm, "hash");
+                if (jsHash.isValid()) {
+                    JSV jsHashName = GetProperty(ctx, jsHash, "name");
+                    if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.verify] ECDSA must have a valid hash algorithm"));
+                        return promise.promise.get(1);
                     }
-                    std::string curve = "P-256";
-                    JSV jsCurve = GetProperty(ctx, uAlgorithm, "namedCurve");
-                    if (jsCurve.isValid()) {
-                        if (!ReadJSValueAsString(ctx, jsCurve, curve) || !allowedCurveName.count(curve)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.verify] ECDSA must have a valid namedCurve"));
-                            return;
-                        }
-                    }
-                    verifyResult = crypto_subtle_verify_ECDSA(&data, &keyBinary, &signature, hashName, curve);
                 }
-                else if (a_name == "HMAC") {
-                    std::string hashName = "SHA-256";
-                    JSV jsHash = GetProperty(ctx, uAlgorithm, "hash");
-                    if (jsHash.isValid()) {
-                        JSV jsHashName = GetProperty(ctx, jsHash, "name");
-                        if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.verify] HMAC must have a valid hash algorithm"));
-                            return;
-                        }
+                std::string curve = "P-256";
+                JSV jsCurve = GetProperty(ctx, uAlgorithm, "namedCurve");
+                if (jsCurve.isValid()) {
+                    if (!ReadJSValueAsString(ctx, jsCurve, curve) || !allowedCurveName.count(curve)) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.verify] ECDSA must have a valid namedCurve"));
+                        return promise.promise.get(1);
                     }
-                    verifyResult = crypto_subtle_verify_HMAC(&data, &keyBinary, &signature, hashName);
                 }
-
-                promise.Resolve(ctx, JS_NewBool(ctx, verifyResult));
-                });
-
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
+                AddAsyncTask(ctx, [=, data = std::move(data), keyBinary = std::move(keyBinary), signature = std::move(signature)]() mutable {
+                    bool verifyResult = crypto_subtle_verify_ECDSA(&data, &keyBinary, &signature, hashName, curve);
+                    end(verifyResult);
+                    });
+            }
+            else if (a_name == "HMAC") {
+                std::string hashName = "SHA-256";
+                JSV jsHash = GetProperty(ctx, uAlgorithm, "hash");
+                if (jsHash.isValid()) {
+                    JSV jsHashName = GetProperty(ctx, jsHash, "name");
+                    if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.verify] HMAC must have a valid hash algorithm"));
+                        return promise.promise.get(1);
+                    }
+                }
+                AddAsyncTask(ctx, [=, data = std::move(data), keyBinary = std::move(keyBinary), signature = std::move(signature)]() mutable {
+                    bool verifyResult = crypto_subtle_verify_HMAC(&data, &keyBinary, &signature, hashName);
+                    end(verifyResult);
+                    });
+            }
 
             return promise.promise.get(1);
         }
@@ -13196,126 +13023,129 @@ namespace cjs {
                 RemoveAttribute(ctx, jsAlgorithm, key);
             }
 
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
+            BYTEBUFFER plaintext;
+            if (!ReadJSValueAsArrayBufferView(ctx, uData, plaintext)) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] The data must be a ArrayBuffer or ArrayBufferView"));
+                return promise.promise.get(1);
             }
 
-            std::thread t([=]() {
-                BYTEBUFFER plaintext = {};
-                if (!ReadJSValueAsArrayBufferView(ctx, uData, plaintext)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] The data must be a ArrayBuffer or ArrayBufferView"));
-                    return;
-                }
+            JSV jsKeyInternal = GetProperty(ctx, uKey, "internal");
+            if (!jsKeyInternal.isValid()) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] Invalid CryptoKey object"));
+                return promise.promise.get(1);
+            }
 
-                JSV jsKeyInternal = GetProperty(ctx, uKey, "internal");
-                if (!jsKeyInternal.isValid()) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] Invalid CryptoKey object"));
-                    return;
-                }
+            JSV jsKeyData = GetProperty(ctx, jsKeyInternal, "data");
+            BYTEBUFFER keyBinary;
+            if (!jsKeyData.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsKeyData, keyBinary)) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] Failed to read key data"));
+                return promise.promise.get(1);
+            }
 
-                JSV jsKeyData = GetProperty(ctx, jsKeyInternal, "data");
-                BYTEBUFFER keyBinary = {};
-                if (!jsKeyData.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsKeyData, keyBinary)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] Failed to read key data"));
-                    return;
-                }
-
-                BYTEBUFFER ciphertext = {};
-                bool encryptResult = false;
-
-                if (a_name == "AES-GCM") {
-                    JSV jsIv = GetProperty(ctx, uAlgorithm, "iv");
-                    BYTEBUFFER ivBinary = {};
-                    if (!jsIv.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsIv, ivBinary)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] AES-GCM algorithm must have a valid 'iv' property"));
+            auto end = [=](const bool& encryptResult, const BYTEBUFFER& ciphertext) {
+                AddNativeTask(ctx, [=, encryptResult = std::move(encryptResult), ciphertext = std::move(ciphertext)] mutable {
+                    if (!encryptResult) {
+                        promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.encrypt] Failed to encrypt data with " + a_name));
                         return;
                     }
+                    promise.Resolve(ctx, NewArrayBuffer(ctx, ciphertext));
+                    });
+                };
 
-                    uint64_t tagLength = 128;
-                    JSV jsTagLength = GetProperty(ctx, uAlgorithm, "tagLength");
-                    if (jsTagLength.isValid()) {
-                        uint64_t tempTagLength = 0;
-                        if (!ReadJSValueAsUint64(ctx, jsTagLength, tempTagLength) || tempTagLength % 8 != 0 || tempTagLength < 32 || tempTagLength > 128) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] AES-GCM tagLength must be a multiple of 8 bits between 32 and 128"));
-                            return;
-                        }
-                        tagLength = tempTagLength;
-                    }
-
-                    BYTEBUFFER additionalDataBinary = {};
-                    JSV jsAdditionalData = GetProperty(ctx, uAlgorithm, "additionalData");
-                    if (jsAdditionalData.isValid() && !ReadJSValueAsArrayBufferView(ctx, jsAdditionalData, additionalDataBinary)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] AES-GCM additionalData must be a ArrayBuffer or ArrayBufferView"));
-                        return;
-                    }
-
-                    encryptResult = crypto_subtle_encrypt_AES_GCM(&plaintext, &keyBinary, &ciphertext, &ivBinary, tagLength, &additionalDataBinary);
-                }
-                else if (a_name == "AES-CBC") {
-                    JSV jsIv = GetProperty(ctx, uAlgorithm, "iv");
-                    BYTEBUFFER ivBinary = {};
-                    if (!jsIv.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsIv, ivBinary)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] AES-CBC algorithm must have a valid 'iv' property"));
-                        return;
-                    }
-
-                    encryptResult = crypto_subtle_encrypt_AES_CBC(&plaintext, &keyBinary, &ciphertext, &ivBinary);
-                }
-                else if (a_name == "AES-CTR") {
-                    JSV jsIv = GetProperty(ctx, uAlgorithm, "iv");
-                    BYTEBUFFER ivBinary = {};
-                    if (!jsIv.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsIv, ivBinary)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] AES-CTR algorithm must have a valid 'iv' property"));
-                        return;
-                    }
-
-                    encryptResult = crypto_subtle_encrypt_AES_CTR(&plaintext, &keyBinary, &ciphertext, &ivBinary);
-                }
-                else if (a_name == "ChaCha20-Poly1305") {
-                    JSV jsIv = GetProperty(ctx, uAlgorithm, "iv");
-                    BYTEBUFFER ivBinary = {};
-                    if (!jsIv.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsIv, ivBinary)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] ChaCha20-Poly1305 algorithm must have a valid 'iv' property"));
-                        return;
-                    }
-
-                    BYTEBUFFER additionalDataBinary = {};
-                    JSV jsAdditionalData = GetProperty(ctx, uAlgorithm, "additionalData");
-                    if (jsAdditionalData.isValid() && !ReadJSValueAsArrayBufferView(ctx, jsAdditionalData, additionalDataBinary)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] ChaCha20-Poly1305 additionalData must be a ArrayBuffer or ArrayBufferView"));
-                        return;
-                    }
-
-                    encryptResult = crypto_subtle_encrypt_ChaCha20_Poly1305(&plaintext, &keyBinary, &ciphertext, &ivBinary, &additionalDataBinary);
-                }
-                else if (a_name == "RSA-OAEP") {
-                    std::string hashName = "SHA-256";
-                    JSV jsHash = GetProperty(ctx, uAlgorithm, "hash");
-                    if (jsHash.isValid()) {
-                        JSV jsHashName = GetProperty(ctx, jsHash, "name");
-                        if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] RSA-OAEP must have a valid hash algorithm"));
-                            return;
-                        }
-                    }
-
-                    encryptResult = crypto_subtle_encrypt_RSA_OAEP(&plaintext, &keyBinary, &ciphertext, hashName);
+            if (a_name == "AES-GCM") {
+                JSV jsIv = GetProperty(ctx, uAlgorithm, "iv");
+                BYTEBUFFER ivBinary;
+                if (!jsIv.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsIv, ivBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] AES-GCM algorithm must have a valid 'iv' property"));
+                    return promise.promise.get(1);
                 }
 
-                if (!encryptResult) {
-                    promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.encrypt] Failed to encrypt data with " + a_name));
-                    return;
+                uint64_t tagLength = 128;
+                JSV jsTagLength = GetProperty(ctx, uAlgorithm, "tagLength");
+                if (jsTagLength.isValid()) {
+                    uint64_t tempTagLength = 0;
+                    if (!ReadJSValueAsUint64(ctx, jsTagLength, tempTagLength) || tempTagLength % 8 != 0 || tempTagLength < 32 || tempTagLength > 128) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] AES-GCM tagLength must be a multiple of 8 bits between 32 and 128"));
+                        return promise.promise.get(1);
+                    }
+                    tagLength = tempTagLength;
                 }
 
-                promise.Resolve(ctx, NewArrayBuffer(ctx, ciphertext));
-                });
+                BYTEBUFFER additionalDataBinary;
+                JSV jsAdditionalData = GetProperty(ctx, uAlgorithm, "additionalData");
+                if (jsAdditionalData.isValid() && !ReadJSValueAsArrayBufferView(ctx, jsAdditionalData, additionalDataBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] AES-GCM additionalData must be a ArrayBuffer or ArrayBufferView"));
+                    return promise.promise.get(1);
+                }
 
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
+                AddAsyncTask(ctx, [=, plaintext = std::move(plaintext), keyBinary = std::move(keyBinary), ivBinary = std::move(ivBinary), additionalDataBinary = std::move(additionalDataBinary)]() mutable {
+                    BYTEBUFFER ciphertext = {};
+                    bool encryptResult = crypto_subtle_encrypt_AES_GCM(&plaintext, &keyBinary, &ciphertext, &ivBinary, tagLength, &additionalDataBinary);
+                    end(encryptResult, ciphertext);
+                    });
+            }
+            else if (a_name == "AES-CBC") {
+                JSV jsIv = GetProperty(ctx, uAlgorithm, "iv");
+                BYTEBUFFER ivBinary;
+                if (!jsIv.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsIv, ivBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] AES-CBC algorithm must have a valid 'iv' property"));
+                    return promise.promise.get(1);
+                }
+                AddAsyncTask(ctx, [=, plaintext = std::move(plaintext), keyBinary = std::move(keyBinary), ivBinary = std::move(ivBinary)]() mutable {
+                    BYTEBUFFER ciphertext = {};
+                    bool encryptResult = crypto_subtle_encrypt_AES_CBC(&plaintext, &keyBinary, &ciphertext, &ivBinary);
+                    end(encryptResult, ciphertext);
+                    });
+            }
+            else if (a_name == "AES-CTR") {
+                JSV jsIv = GetProperty(ctx, uAlgorithm, "iv");
+                BYTEBUFFER ivBinary;
+                if (!jsIv.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsIv, ivBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] AES-CTR algorithm must have a valid 'iv' property"));
+                    return promise.promise.get(1);
+                }
+                AddAsyncTask(ctx, [=, plaintext = std::move(plaintext), keyBinary = std::move(keyBinary), ivBinary = std::move(ivBinary)]() mutable {
+                    BYTEBUFFER ciphertext = {};
+                    bool encryptResult = crypto_subtle_encrypt_AES_CTR(&plaintext, &keyBinary, &ciphertext, &ivBinary);
+                    end(encryptResult, ciphertext);
+                    });
+            }
+            else if (a_name == "ChaCha20-Poly1305") {
+                JSV jsIv = GetProperty(ctx, uAlgorithm, "iv");
+                BYTEBUFFER ivBinary;
+                if (!jsIv.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsIv, ivBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] ChaCha20-Poly1305 algorithm must have a valid 'iv' property"));
+                    return promise.promise.get(1);
+                }
+
+                BYTEBUFFER additionalDataBinary;
+                JSV jsAdditionalData = GetProperty(ctx, uAlgorithm, "additionalData");
+                if (jsAdditionalData.isValid() && !ReadJSValueAsArrayBufferView(ctx, jsAdditionalData, additionalDataBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] ChaCha20-Poly1305 additionalData must be a ArrayBuffer or ArrayBufferView"));
+                    return promise.promise.get(1);
+                }
+                AddAsyncTask(ctx, [=, plaintext = std::move(plaintext), keyBinary = std::move(keyBinary), ivBinary = std::move(ivBinary), additionalDataBinary = std::move(additionalDataBinary)]() mutable {
+                    BYTEBUFFER ciphertext = {};
+                    bool encryptResult = crypto_subtle_encrypt_ChaCha20_Poly1305(&plaintext, &keyBinary, &ciphertext, &ivBinary, &additionalDataBinary);
+                    end(encryptResult, ciphertext);
+                    });
+            }
+            else if (a_name == "RSA-OAEP") {
+                std::string hashName = "SHA-256";
+                JSV jsHash = GetProperty(ctx, uAlgorithm, "hash");
+                if (jsHash.isValid()) {
+                    JSV jsHashName = GetProperty(ctx, jsHash, "name");
+                    if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] RSA-OAEP must have a valid hash algorithm"));
+                        return promise.promise.get(1);
+                    }
+                }
+                AddAsyncTask(ctx, [=, plaintext = std::move(plaintext), keyBinary = std::move(keyBinary)]() mutable {
+                    BYTEBUFFER ciphertext = {};
+                    bool encryptResult = crypto_subtle_encrypt_RSA_OAEP(&plaintext, &keyBinary, &ciphertext, hashName);
+                    end(encryptResult, ciphertext);
+                    });
+            }
 
             return promise.promise.get(1);
         }
@@ -13429,126 +13259,128 @@ namespace cjs {
                 RemoveAttribute(ctx, jsAlgorithm, key);
             }
 
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
+            BYTEBUFFER ciphertext = {};
+            if (!ReadJSValueAsArrayBufferView(ctx, uData, ciphertext)) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] The data must be a ArrayBuffer or ArrayBufferView"));
+                return promise.promise.get(1);
             }
 
-            std::thread t([=]() {
-                BYTEBUFFER ciphertext = {};
-                if (!ReadJSValueAsArrayBufferView(ctx, uData, ciphertext)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] The data must be a ArrayBuffer or ArrayBufferView"));
-                    return;
-                }
+            JSV jsKeyInternal = GetProperty(ctx, uKey, "internal");
+            if (!jsKeyInternal.isValid()) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] Invalid CryptoKey object"));
+                return promise.promise.get(1);
+            }
 
-                JSV jsKeyInternal = GetProperty(ctx, uKey, "internal");
-                if (!jsKeyInternal.isValid()) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] Invalid CryptoKey object"));
-                    return;
-                }
+            JSV jsKeyData = GetProperty(ctx, jsKeyInternal, "data");
+            BYTEBUFFER keyBinary = {};
+            if (!jsKeyData.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsKeyData, keyBinary)) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] Failed to read key data"));
+                return promise.promise.get(1);
+            }
 
-                JSV jsKeyData = GetProperty(ctx, jsKeyInternal, "data");
-                BYTEBUFFER keyBinary = {};
-                if (!jsKeyData.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsKeyData, keyBinary)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] Failed to read key data"));
-                    return;
-                }
-
-                BYTEBUFFER plaintext = {};
-                bool decryptResult = false;
-
-                if (a_name == "AES-GCM") {
-                    JSV jsIv = GetProperty(ctx, uAlgorithm, "iv");
-                    BYTEBUFFER ivBinary = {};
-                    if (!jsIv.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsIv, ivBinary)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] AES-GCM algorithm must have a valid 'iv' property"));
+            auto end = [=](const bool& decryptResult, const BYTEBUFFER& plaintext) {
+                AddNativeTask(ctx, [=, decryptResult = std::move(decryptResult), plaintext = std::move(plaintext)] mutable {
+                    if (!decryptResult) {
+                        promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.decrypt] Failed to decrypt data with " + a_name));
                         return;
                     }
+                    promise.Resolve(ctx, NewArrayBuffer(ctx, plaintext));
+                    });
+                };
 
-                    uint64_t tagLength = 128;
-                    JSV jsTagLength = GetProperty(ctx, uAlgorithm, "tagLength");
-                    if (jsTagLength.isValid()) {
-                        uint64_t tempTagLength = 0;
-                        if (!ReadJSValueAsUint64(ctx, jsTagLength, tempTagLength) || tempTagLength % 8 != 0 || tempTagLength < 32 || tempTagLength > 128) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] AES-GCM tagLength must be a multiple of 8 bits between 32 and 128"));
-                            return;
-                        }
-                        tagLength = tempTagLength;
-                    }
-
-                    BYTEBUFFER additionalDataBinary = {};
-                    JSV jsAdditionalData = GetProperty(ctx, uAlgorithm, "additionalData");
-                    if (jsAdditionalData.isValid() && !ReadJSValueAsArrayBufferView(ctx, jsAdditionalData, additionalDataBinary)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] AES-GCM additionalData must be a ArrayBuffer or ArrayBufferView"));
-                        return;
-                    }
-
-                    decryptResult = crypto_subtle_decrypt_AES_GCM(&ciphertext, &keyBinary, &plaintext, &ivBinary, tagLength, &additionalDataBinary);
-                }
-                else if (a_name == "AES-CBC") {
-                    JSV jsIv = GetProperty(ctx, uAlgorithm, "iv");
-                    BYTEBUFFER ivBinary = {};
-                    if (!jsIv.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsIv, ivBinary)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] AES-CBC algorithm must have a valid 'iv' property"));
-                        return;
-                    }
-
-                    decryptResult = crypto_subtle_decrypt_AES_CBC(&ciphertext, &keyBinary, &plaintext, &ivBinary);
-                }
-                else if (a_name == "AES-CTR") {
-                    JSV jsIv = GetProperty(ctx, uAlgorithm, "iv");
-                    BYTEBUFFER ivBinary = {};
-                    if (!jsIv.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsIv, ivBinary)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] AES-CTR algorithm must have a valid 'iv' property"));
-                        return;
-                    }
-
-                    decryptResult = crypto_subtle_decrypt_AES_CTR(&ciphertext, &keyBinary, &plaintext, &ivBinary);
-                }
-                else if (a_name == "ChaCha20-Poly1305") {
-                    JSV jsIv = GetProperty(ctx, uAlgorithm, "iv");
-                    BYTEBUFFER ivBinary = {};
-                    if (!jsIv.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsIv, ivBinary)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] ChaCha20-Poly1305 algorithm must have a valid 'iv' property"));
-                        return;
-                    }
-
-                    BYTEBUFFER additionalDataBinary = {};
-                    JSV jsAdditionalData = GetProperty(ctx, uAlgorithm, "additionalData");
-                    if (jsAdditionalData.isValid() && !ReadJSValueAsArrayBufferView(ctx, jsAdditionalData, additionalDataBinary)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] ChaCha20-Poly1305 additionalData must be a ArrayBuffer or ArrayBufferView"));
-                        return;
-                    }
-
-                    decryptResult = crypto_subtle_decrypt_ChaCha20_Poly1305(&ciphertext, &keyBinary, &plaintext, &ivBinary, &additionalDataBinary);
-                }
-                else if (a_name == "RSA-OAEP") {
-                    std::string hashName = "SHA-256";
-                    JSV jsHash = GetProperty(ctx, uAlgorithm, "hash");
-                    if (jsHash.isValid()) {
-                        JSV jsHashName = GetProperty(ctx, jsHash, "name");
-                        if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] RSA-OAEP must have a valid hash algorithm"));
-                            return;
-                        }
-                    }
-
-                    decryptResult = crypto_subtle_decrypt_RSA_OAEP(&ciphertext, &keyBinary, &plaintext, hashName);
+            if (a_name == "AES-GCM") {
+                JSV jsIv = GetProperty(ctx, uAlgorithm, "iv");
+                BYTEBUFFER ivBinary = {};
+                if (!jsIv.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsIv, ivBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] AES-GCM algorithm must have a valid 'iv' property"));
+                    return promise.promise.get(1);
                 }
 
-                if (!decryptResult) {
-                    promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.decrypt] Failed to decrypt data with " + a_name));
-                    return;
+                uint64_t tagLength = 128;
+                JSV jsTagLength = GetProperty(ctx, uAlgorithm, "tagLength");
+                if (jsTagLength.isValid()) {
+                    uint64_t tempTagLength = 0;
+                    if (!ReadJSValueAsUint64(ctx, jsTagLength, tempTagLength) || tempTagLength % 8 != 0 || tempTagLength < 32 || tempTagLength > 128) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] AES-GCM tagLength must be a multiple of 8 bits between 32 and 128"));
+                        return promise.promise.get(1);
+                    }
+                    tagLength = tempTagLength;
                 }
 
-                promise.Resolve(ctx, NewArrayBuffer(ctx, plaintext));
-                });
+                BYTEBUFFER additionalDataBinary = {};
+                JSV jsAdditionalData = GetProperty(ctx, uAlgorithm, "additionalData");
+                if (jsAdditionalData.isValid() && !ReadJSValueAsArrayBufferView(ctx, jsAdditionalData, additionalDataBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] AES-GCM additionalData must be a ArrayBuffer or ArrayBufferView"));
+                    return promise.promise.get(1);
+                }
 
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
+                AddAsyncTask(ctx, [=, ciphertext = std::move(ciphertext), keyBinary = std::move(keyBinary), ivBinary = std::move(ivBinary), additionalDataBinary = std::move(additionalDataBinary)]() mutable {
+                    BYTEBUFFER plaintext = {};
+                    end(crypto_subtle_decrypt_AES_GCM(&ciphertext, &keyBinary, &plaintext, &ivBinary, tagLength, &additionalDataBinary), plaintext);
+                    });
+            }
+            else if (a_name == "AES-CBC") {
+                JSV jsIv = GetProperty(ctx, uAlgorithm, "iv");
+                BYTEBUFFER ivBinary = {};
+                if (!jsIv.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsIv, ivBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] AES-CBC algorithm must have a valid 'iv' property"));
+                    return promise.promise.get(1);
+                }
+
+                AddAsyncTask(ctx, [=, ciphertext = std::move(ciphertext), keyBinary = std::move(keyBinary), ivBinary = std::move(ivBinary)]() mutable {
+                    BYTEBUFFER plaintext = {};
+                    end(crypto_subtle_decrypt_AES_CBC(&ciphertext, &keyBinary, &plaintext, &ivBinary), plaintext);
+                    });
+            }
+            else if (a_name == "AES-CTR") {
+                JSV jsIv = GetProperty(ctx, uAlgorithm, "iv");
+                BYTEBUFFER ivBinary = {};
+                if (!jsIv.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsIv, ivBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] AES-CTR algorithm must have a valid 'iv' property"));
+                    return promise.promise.get(1);
+                }
+
+                AddAsyncTask(ctx, [=, ciphertext = std::move(ciphertext), keyBinary = std::move(keyBinary), ivBinary = std::move(ivBinary)]() mutable {
+                    BYTEBUFFER plaintext = {};
+                    end(crypto_subtle_decrypt_AES_CTR(&ciphertext, &keyBinary, &plaintext, &ivBinary), plaintext);
+                    });
+            }
+            else if (a_name == "ChaCha20-Poly1305") {
+                JSV jsIv = GetProperty(ctx, uAlgorithm, "iv");
+                BYTEBUFFER ivBinary = {};
+                if (!jsIv.isValid() || !ReadJSValueAsArrayBufferView(ctx, jsIv, ivBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] ChaCha20-Poly1305 algorithm must have a valid 'iv' property"));
+                    return promise.promise.get(1);
+                }
+
+                BYTEBUFFER additionalDataBinary = {};
+                JSV jsAdditionalData = GetProperty(ctx, uAlgorithm, "additionalData");
+                if (jsAdditionalData.isValid() && !ReadJSValueAsArrayBufferView(ctx, jsAdditionalData, additionalDataBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] ChaCha20-Poly1305 additionalData must be a ArrayBuffer or ArrayBufferView"));
+                    return promise.promise.get(1);
+                }
+
+                AddAsyncTask(ctx, [=, ciphertext = std::move(ciphertext), keyBinary = std::move(keyBinary), ivBinary = std::move(ivBinary), additionalDataBinary = std::move(additionalDataBinary)]() mutable {
+                    BYTEBUFFER plaintext = {};
+                    end(crypto_subtle_decrypt_ChaCha20_Poly1305(&ciphertext, &keyBinary, &plaintext, &ivBinary, &additionalDataBinary), plaintext);
+                    });
+            }
+            else if (a_name == "RSA-OAEP") {
+                std::string hashName = "SHA-256";
+                JSV jsHash = GetProperty(ctx, uAlgorithm, "hash");
+                if (jsHash.isValid()) {
+                    JSV jsHashName = GetProperty(ctx, jsHash, "name");
+                    if (!jsHashName.isValid() || !ReadJSValueAsString(ctx, jsHashName, hashName) || !allowedShaName.count(hashName)) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] RSA-OAEP must have a valid hash algorithm"));
+                        return promise.promise.get(1);
+                    }
+                }
+
+                AddAsyncTask(ctx, [=, ciphertext = std::move(ciphertext), keyBinary = std::move(keyBinary)]() mutable {
+                    BYTEBUFFER plaintext = {};
+                    end(crypto_subtle_decrypt_RSA_OAEP(&ciphertext, &keyBinary, &plaintext, hashName), plaintext);
+                    });
+            }
 
             return promise.promise.get(1);
         }
@@ -13563,46 +13395,39 @@ namespace cjs {
             JSV js_algorithm = JSV(ctx, argumentValues[0]).cget(1).cset(1);
             JSV js_data = JSV(ctx, argumentValues[1]).cget(1).cset(1);
 
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
+            JSV js_name = GetProperty(ctx, js_algorithm, "name");
+            std::string name = "";
+            if (!js_name.isValid() || !ReadJSValueAsString(ctx, js_name, name)) {
+                if (!js_name.isValid()) promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.digest] The algorithm must have 'name' property"));
+                else promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.digest] The algorithm name must be a string"));
+                return promise.promise.get(1);
             }
 
-            std::thread t([=]() {
+            BYTEBUFFER data = {};
+            if (!ReadJSValueAsArrayBufferView(ctx, js_data, data)) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.digest] The data must be a ArrayBufferView"));
+                return promise.promise.get(1);
+            }
 
-                JSV js_name = GetProperty(ctx, js_algorithm, "name");
-                std::string name = "";
-                if (!js_name.isValid() || !ReadJSValueAsString(ctx, js_name, name)) {
-                    if (!js_name.isValid()) promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.digest] The algorithm must have 'name' property"));
-                    else promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.digest] The algorithm name must be a string"));
-                    return;
-                }
+            if (!allowedShaName.count(name)) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.digest] The hash '" + name + "' is not supported"));
+                return promise.promise.get(1);
+            }
 
-                BYTEBUFFER data = {};
-                if (!ReadJSValueAsArrayBufferView(ctx, js_data, data)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.digest] The data must be a ArrayBufferView"));
-                    return;
-                }
+            auto end = [=](const bool& digestResult, const BYTEBUFFER& outData) {
+                AddNativeTask(ctx, [=, digestResult = std::move(digestResult), outData = std::move(outData)] mutable {
+                    if (!digestResult) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.digest] Failed to digest data"));
+                        return;
+                    }
+                    promise.Resolve(ctx, NewArrayBuffer(ctx, outData));
+                    });
+                };
 
-                if (!allowedShaName.count(name)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.digest] The hash '" + name + "' is not supported"));
-                    return;
-                }
-
+            AddAsyncTask(ctx, [=, data = std::move(data)]() mutable {
                 BYTEBUFFER outData = {};
-                if (!crypto_subtle_digest_core(name, &data, &outData)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.digest] Failed to digest data"));
-                    return;
-                }
-
-                promise.Resolve(ctx, NewArrayBuffer(ctx, outData));
-                return;
+                end(crypto_subtle_digest_core(name, &data, &outData), outData);
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
 
             return promise.promise.get(1);
         }
@@ -13626,61 +13451,63 @@ namespace cjs {
                 return promise.promise.get(1);
             }
 
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
+            JSV js_extractable = GetProperty(ctx, js_key, "extractable");
+            bool extractable = false;
+            if (!js_extractable.isValid() || !ReadJSValueAsBool(ctx, js_extractable, extractable)) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The CryptoKey is invalid"));
+                return promise.promise.get(1);
+            }
+            if (!extractable) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The key is not extractable"));
+                return promise.promise.get(1);
             }
 
-            std::thread t([=]() {
+            JSV js_algorithm = GetProperty(ctx, js_key, "algorithm");
+            if (!js_algorithm.isValid()) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The CryptoKey is invalid"));
+                return promise.promise.get(1);
+            }
 
-                JSV js_extractable = GetProperty(ctx, js_key, "extractable");
-                bool extractable = false;
-                if (!js_extractable.isValid() || !ReadJSValueAsBool(ctx, js_extractable, extractable)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The CryptoKey is invalid"));
-                    return;
-                }
-                if (!extractable) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The key is not extractable"));
-                    return;
-                }
+            JSV js_keyUsages = GetProperty(ctx, js_key, "usages");
+            if (!js_keyUsages.isValid()) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The CryptoKey is invalid"));
+                return promise.promise.get(1);
+            }
 
-                JSV js_algorithm = GetProperty(ctx, js_key, "algorithm");
-                if (!js_algorithm.isValid()) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The CryptoKey is invalid"));
-                    return;
-                }
+            BYTEBUFFER keyBinary = {};
+            ReadJSValueAsArrayBufferView(ctx, GetProperty(ctx, js_key, { { "internal" },{ "data" } }), keyBinary);
+            if (keyBinary.empty()) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The CryptoKey is invalid"));
+                return promise.promise.get(1);
+            }
 
-                JSV js_keyUsages = GetProperty(ctx, js_key, "usages");
-                if (!js_keyUsages.isValid()) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The CryptoKey is invalid"));
-                    return;
-                }
+            std::string name = "";
+            ReadJSValueAsString(ctx, GetProperty(ctx, js_algorithm, "name"), name);
 
-                BYTEBUFFER keyBinary = {};
-                ReadJSValueAsArrayBufferView(ctx, GetProperty(ctx, js_key, { {"internal"}, {"data"} }), keyBinary);
-                if (keyBinary.empty()) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The CryptoKey is invalid"));
-                    return;
-                }
+            if (!allowedExportAlgorithm.count(format)) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The format is not supported"));
+                return promise.promise.get(1);
+            }
 
-                std::string name = "";
-                ReadJSValueAsString(ctx, GetProperty(ctx, js_algorithm, "name"), name);
+            if (!allowedExportAlgorithm[format].count(name)) {
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] Cannot export the '" + name + "' key with '" + format + "' format"));
+                return promise.promise.get(1);
+            }
 
-                if (!allowedExportAlgorithm.count(format)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The format is not supported"));
-                    return;
-                }
+            auto endJwk = [=](OBJECT jwk) {
+                AddNativeTask(ctx, [=, jwk = std::move(jwk)]() mutable {
+                    promise.Resolve(ctx, NewObject(ctx, jwk));
+                    });
+                };
+            auto endRaw = [=](BYTEBUFFER outBin) {
+                AddNativeTask(ctx, [=, outBin = std::move(outBin)]() mutable {
+                    promise.Resolve(ctx, NewArrayBuffer(ctx, outBin));
+                    });
+                };
 
-                if (!allowedExportAlgorithm[format].count(name)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] Cannot export the '" + name + "' key with '" + format + "' format"));
-                    return;
-                }
-
-                if (format == "jwk") {
-
+            if (format == "jwk") {
+                AddAsyncTask(ctx, [=, keyBinary = std::move(keyBinary)]() mutable {
                     OBJECT jwk = {};
-
                     bool ext = true;
                     ARRAY key_ops = {};
 
@@ -13697,9 +13524,11 @@ namespace cjs {
 
                         if (name == "HMAC") {
                             std::string hash_name = "";
-                            ReadJSValueAsString(ctx, GetProperty(ctx, js_algorithm, { {"hash"}, {"name"} }), hash_name);
+                            ReadJSValueAsString(ctx, GetProperty(ctx, js_algorithm, { { "hash" },{ "name" } }), hash_name);
                             if (hash_name.empty()) {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The CryptoKey is invalid"));
+                                AddNativeTask(ctx, [=]() {
+                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The CryptoKey is invalid"));
+                                    });
                                 return;
                             }
 
@@ -13712,12 +13541,16 @@ namespace cjs {
                                 alg = "HS" + hash_name_vc[1] + "-" + hash_name_vc[2];
                             }
                             else {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The CryptoKey is invalid"));
+                                AddNativeTask(ctx, [=]() {
+                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The CryptoKey is invalid"));
+                                    });
                                 return;
                             }
 
                             if (!BinaryToBaseX(&keyBinary, 64, true)) {
-                                promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.exportKey] Failed to export key"));
+                                AddNativeTask(ctx, [=]() {
+                                    promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.exportKey] Failed to export key"));
+                                    });
                                 return;
                             }
                             k = GetTextFromBinary(&keyBinary);
@@ -13731,7 +13564,9 @@ namespace cjs {
                             uint64_t length = 0;
                             ReadJSValueAsUint64(ctx, GetProperty(ctx, js_algorithm, "length"), length);
                             if (length == 0) {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The CryptoKey is invalid"));
+                                AddNativeTask(ctx, [=]() {
+                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The CryptoKey is invalid"));
+                                    });
                                 return;
                             }
 
@@ -13741,7 +13576,9 @@ namespace cjs {
                                 alg = "A" + std::to_string(length) + name_vc[1];
                             }
                             else {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The CryptoKey is invalid"));
+                                AddNativeTask(ctx, [=]() {
+                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The CryptoKey is invalid"));
+                                    });
                                 return;
                             }
 
@@ -13750,7 +13587,9 @@ namespace cjs {
                                 });
 
                             if (!BinaryToBaseX(&keyBinary, 64, true)) {
-                                promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.exportKey] Failed to export key"));
+                                AddNativeTask(ctx, [=]() {
+                                    promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.exportKey] Failed to export key"));
+                                    });
                                 return;
                             }
                             k = GetTextFromBinary(&keyBinary);
@@ -13766,7 +13605,9 @@ namespace cjs {
                                 });
 
                             if (!BinaryToBaseX(&keyBinary, 64, true)) {
-                                promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.exportKey] Failed to export key"));
+                                AddNativeTask(ctx, [=]() {
+                                    promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.exportKey] Failed to export key"));
+                                    });
                                 return;
                             }
                             k = GetTextFromBinary(&keyBinary);
@@ -13778,7 +13619,9 @@ namespace cjs {
                             jwk[L"k"] = k;
                         }
                         else {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The CryptoKey is invalid"));
+                            AddNativeTask(ctx, [=]() {
+                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The CryptoKey is invalid"));
+                                });
                             return;
                         }
                     }
@@ -13786,22 +13629,22 @@ namespace cjs {
                         std::string kty = "RSA";
 
                         std::string hash_name = "";
-                        ReadJSValueAsString(ctx, GetProperty(ctx, js_algorithm, { {"hash"}, {"name"} }), hash_name);
+                        ReadJSValueAsString(ctx, GetProperty(ctx, js_algorithm, { { "hash" },{ "name" } }), hash_name);
                         std::vector<std::string> hash_name_vc = SplitString(hash_name, "-");
                         size_t hash_name_vcs = hash_name_vc.size();
-                        if (hash_name_vcs == 2) {
-                        }
-                        else {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The CryptoKey is invalid"));
+                        if (hash_name_vcs != 2) {
+                            AddNativeTask(ctx, [=]() {
+                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The CryptoKey is invalid"));
+                                });
                             return;
                         }
                         std::string alg = (name == "RSA-OAEP" ? name + "-" : (name == "RSA-PSS" ? "PS" : (name == "RSASSA-PKCS1-v1_5" ? "RS" : ""))) + hash_name_vc[1];
 
                         RSAJWKDATA rjd = crypto_subtle_exportKey_jwk_RSA(&keyBinary);
-                        if (rjd.isValid) {
-                        }
-                        else {
-                            promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.exportKey] Failed to export key"));
+                        if (!rjd.isValid) {
+                            AddNativeTask(ctx, [=]() {
+                                promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.exportKey] Failed to export key"));
+                                });
                             return;
                         }
 
@@ -13826,7 +13669,6 @@ namespace cjs {
                             jwk[L"dq"] = GetTextFromBinary(&rjd.dq);
                             jwk[L"qi"] = GetTextFromBinary(&rjd.qi);
                         }
-
                     }
                     else if (name == "ECDSA" || name == "ECDH") {
                         std::string kty = "EC";
@@ -13835,10 +13677,10 @@ namespace cjs {
                         ReadJSValueAsString(ctx, GetProperty(ctx, js_algorithm, "namedCurve"), namedCurve);
 
                         ECJWKDATA ejd = crypto_subtle_exportKey_jwk_EC(&keyBinary);
-                        if (ejd.isValid) {
-                        }
-                        else {
-                            promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.exportKey] Failed to export key"));
+                        if (!ejd.isValid) {
+                            AddNativeTask(ctx, [=]() {
+                                promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.exportKey] Failed to export key"));
+                                });
                             return;
                         }
 
@@ -13854,7 +13696,6 @@ namespace cjs {
                             BinaryToBaseX(&ejd.d, 64, true);
                             jwk[L"d"] = GetTextFromBinary(&ejd.d);
                         }
-
                     }
                     else if (name == "Ed25519" || name == "X25519") {
                         std::string kty = "OKP";
@@ -13866,10 +13707,10 @@ namespace cjs {
                         ReadJSValueAsString(ctx, GetProperty(ctx, js_key, "type"), type);
 
                         BYTEBUFFER publicKeyBinary = {};
-                        if (crypto_subtle_exportKey_jwk_Ed25519_X25519(&keyBinary, &publicKeyBinary)) {
-                        }
-                        else {
-                            promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.exportKey] Failed to export key"));
+                        if (!crypto_subtle_exportKey_jwk_Ed25519_X25519(&keyBinary, &publicKeyBinary)) {
+                            AddNativeTask(ctx, [=]() {
+                                promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.exportKey] Failed to export key"));
+                                });
                             return;
                         }
 
@@ -13885,32 +13726,25 @@ namespace cjs {
                         }
                     }
                     else {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The algorithm name '" + name + "' is not supported"));
+                        AddNativeTask(ctx, [=]() {
+                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] The algorithm name '" + name + "' is not supported"));
+                            });
+                        return;
                     }
-
-                    promise.Resolve(ctx, NewObject(ctx, jwk));
-                    return;
-                }
-                else {
-                    if (format == "spki" || format == "pkcs8") {
-                        std::string type = "";
-                        ReadJSValueAsString(ctx, GetProperty(ctx, js_key, "type"), type);
-                        if ((type == "public" && format == "pkcs8") || (type == "private" && format == "spki") || type == "") {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] Cannot export " + type + " key as format '" + format + "'"));
-                            return;
-                        }
+                    endJwk(std::move(jwk));
+                    });
+            }
+            else {
+                if (format == "spki" || format == "pkcs8") {
+                    std::string type = "";
+                    ReadJSValueAsString(ctx, GetProperty(ctx, js_key, "type"), type);
+                    if ((type == "public" && format == "pkcs8") || (type == "private" && format == "spki") || type == "") {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.exportKey] Cannot export " + type + " key as format '" + format + "'"));
+                        return promise.promise.get(1);
                     }
-
-                    promise.Resolve(ctx, NewArrayBuffer(ctx, keyBinary));
-                    return;
                 }
-
-                return;
-                });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
+                endRaw(std::move(keyBinary));
+            }
 
             return promise.promise.get(1);
         }
@@ -13983,41 +13817,272 @@ namespace cjs {
                 keyUsages.push_back(usage);
             }
 
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
+            // —— 主线程预读取 algorithm 附加属性与 keyData ——
+            std::string a_hash_name = "";
+            std::string a_named_curve = "";
+            uint64_t a_length = 0;
+            bool has_a_length = false;
+            BYTEBUFFER a_salt = {};
+            uint64_t a_iterations = 0;
+            bool has_a_iterations = false;
+            bool has_hash = false;
+            bool hash_valid = true;
+
+            if (a_name == "HMAC" || a_name == "HKDF") {
+                JSV js_a_hash = {}, js_hash_name = {};
+                has_hash = ReadObjectProperty(ctx, js_algorithm, "hash", js_a_hash) && js_a_hash.isValid();
+                if (!has_hash || !ReadObjectProperty(ctx, js_a_hash, "name", js_hash_name) || !ReadJSValueAsString(ctx, js_hash_name, a_hash_name)) {
+                    hash_valid = false;
+                }
             }
-
-            std::thread t([=]() {
-
-                BYTEBUFFER keyBinary = {};
-                PKDATA pkd = {};
-
-                if (format != "jwk") {
-                    if (!ReadJSValueAsArrayBufferView(ctx, js_keyData, keyBinary)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The keyData must be an ArrayBuffer or ArrayBufferView"));
-                        return;
+            else if (a_name == "PBKDF2") {
+                JSV js_a_hash = {}, js_hash_name = {};
+                has_hash = ReadObjectProperty(ctx, js_algorithm, "hash", js_a_hash) && js_a_hash.isValid();
+                if (has_hash) {
+                    if (!ReadObjectProperty(ctx, js_a_hash, "name", js_hash_name) || !ReadJSValueAsString(ctx, js_hash_name, a_hash_name)) {
+                        hash_valid = false;
                     }
                 }
-                else {
-                    OBJECT jwk = {};
-                    if (!ReadJSValueAsObject(ctx, js_keyData, jwk)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The keyData must be an object"));
-                        return;
+                JSV js_salt = {};
+                if (ReadObjectProperty(ctx, js_algorithm, "salt", js_salt) && js_salt.isValid()) {
+                    ReadJSValueAsArrayBuffer(ctx, js_salt, a_salt);
+                }
+                JSV js_iter = {};
+                has_a_iterations = ReadObjectProperty(ctx, js_algorithm, "iterations", js_iter) && js_iter.isValid();
+                if (has_a_iterations) {
+                    ReadJSValueAsUint64(ctx, js_iter, a_iterations);
+                }
+                JSV js_len = {};
+                has_a_length = ReadObjectProperty(ctx, js_algorithm, "length", js_len);
+                if (has_a_length) {
+                    ReadJSValueAsUint64(ctx, js_len, a_length);
+                }
+            }
+            else if (a_name.find("AES") != std::string::npos) {
+                JSV js_len = {};
+                has_a_length = ReadObjectProperty(ctx, js_algorithm, "length", js_len) && ReadJSValueAsUint64(ctx, js_len, a_length);
+            }
+            else if (a_name == "ECDH" || a_name == "ECDSA") {
+                JSV js_crv = {};
+                ReadObjectProperty(ctx, js_algorithm, "namedCurve", js_crv);
+                ReadJSValueAsString(ctx, js_crv, a_named_curve);
+            }
+            else if (a_name.find("RSA") != std::string::npos) {
+                JSV js_a_hash = {}, js_hash_name = {};
+                has_hash = ReadObjectProperty(ctx, js_algorithm, "hash", js_a_hash) && js_a_hash.isValid();
+                if (has_hash) {
+                    if (!ReadObjectProperty(ctx, js_a_hash, "name", js_hash_name) || !ReadJSValueAsString(ctx, js_hash_name, a_hash_name)) {
+                        hash_valid = false;
                     }
-                    if (!jwk.count(L"kty") || !jwk[L"kty"].isString()) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The keyData must have a 'kty' string property"));
-                        return;
-                    }
-                    if (jwk[L"kty"].get<std::string>() == "oct") {
+                }
+            }
 
+            BYTEBUFFER keyBinary = {};
+            OBJECT jwk = {};
+            bool isJwk = (format == "jwk");
+
+            if (!isJwk) {
+                if (!ReadJSValueAsArrayBufferView(ctx, js_keyData, keyBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The keyData must be an ArrayBuffer or ArrayBufferView"));
+                    return promise.promise.get(1);
+                }
+            }
+            else {
+                if (!ReadJSValueAsObject(ctx, js_keyData, jwk)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The keyData must be an object"));
+                    return promise.promise.get(1);
+                }
+            }
+
+            // —— 结果回调：回到主线程完成 JS 对象构造与 Promise 结算 ——
+            auto end = [=](bool success, const BYTEBUFFER& outKeyBinary, const PKDATA& outPkd,
+                const std::string& errorMsg = "", bool isSyntax = false, bool isInternal = false) {
+                    AddNativeTask(ctx, [=, outKeyBinary = std::move(outKeyBinary), outPkd = std::move(outPkd)]() mutable {
+                        if (!success) {
+                            if (isSyntax) {
+                                promise.Reject(ctx, NewSyntaxError(ctx, errorMsg));
+                            }
+                            else if (isInternal) {
+                                promise.Reject(ctx, NewInternalError(ctx, errorMsg));
+                            }
+                            else {
+                                promise.Reject(ctx, NewTypeError(ctx, errorMsg));
+                            }
+                            return;
+                        }
+
+                        PKDATA pkd = outPkd;
+                        BYTEBUFFER finalBinary = outKeyBinary;
+
+                        if ((a_name.find("AES") == std::string::npos && a_name != "HMAC" && a_name != "ChaCha20-Poly1305")
+                            && a_name != "Ed25519" && a_name != "X25519" && a_name != "HKDF" && a_name != "PBKDF2") {
+                            if (!pkd.isValid) pkd = GetPKData(&finalBinary);
+                        }
+
+                        if (pkd.isValid) {
+                            if (format == "raw" || (pkd.isPrivate && format == "spki") || (!pkd.isPrivate && format == "pkcs8")) {
+                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] Cannot import " + std::string(pkd.isPrivate ? "private" : "public") + " key as format '" + format + "'"));
+                                return;
+                            }
+
+                            if (!(pkd.name == a_name
+                                || (a_name.find("RSA") != std::string::npos && pkd.name == "RSA")
+                                || (a_name == "ECDH" && pkd.name == "ECDSA")
+                                || (a_name == "ECDSA" && pkd.name == "ECDH"))) {
+                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The algorithm does not match the key"));
+                                return;
+                            }
+
+                            if (pkd.modulusLength != 0) {
+                                if (pkd.modulusLength >= 1024 && pkd.modulusLength <= 16384 && pkd.modulusLength % 8 == 0) {
+                                    SetAttribute(ctx, js_algorithm, "modulusLength", NewNumber(ctx, (double)pkd.modulusLength), 0);
+                                }
+                                else {
+                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] RSA modulus length must be 1024-16384 bits and multiple of 8"));
+                                    return;
+                                }
+                            }
+                            if (pkd.publicExponent != 0) {
+                                if (pkd.publicExponent > 1 && pkd.publicExponent % 2 == 1) {
+                                    SetAttribute(ctx, js_algorithm, "publicExponent", NewNumber(ctx, (double)pkd.publicExponent), 0);
+                                }
+                                else {
+                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] RSA public exponent must be odd and greater than 1"));
+                                    return;
+                                }
+                            }
+
+                            for (const std::string& usage : keyUsages) {
+                                if (!allowedKeyUsagesList[a_name].count(usage)
+                                    || (allowedKeyUsagesList[a_name][usage] != ""
+                                        && allowedKeyUsagesList[a_name][usage] != std::string((pkd.isPrivate) ? "b" : "a"))) {
+                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The keyUsage '" + usage + "' is not supported"));
+                                    return;
+                                }
+                            }
+
+                            JSV returnValue = NewObject(ctx);
+                            SetSymbolName(ctx, returnValue, "CryptoKey");
+                            SetAttribute(ctx, returnValue, "type", pkd.isPrivate ? "private" : "public", 0);
+                            SetAttribute(ctx, returnValue, "algorithm", js_algorithm, 0);
+                            SetAttribute(ctx, returnValue, "extractable", js_extractable, 0);
+                            SetAttribute(ctx, returnValue, "usages", js_keyUsages, 0);
+
+                            JSV privateObject = NewObject(ctx);
+                            JSV data = NewUint8Array(ctx, finalBinary);
+                            SetAttribute(ctx, privateObject, "data", data, 0);
+                            SetAttribute(ctx, privateObject, "_isPrivate", NewBool(ctx, true), 0);
+                            SetAttribute(ctx, returnValue, "internal", privateObject, 0);
+
+                            promise.Resolve(ctx, returnValue);
+                        }
+                        else {
+                            if (a_name == "HMAC") {
+                                if (!hash_valid) {
+                                    if (!has_hash) promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The algorithm must have a 'hash' object"));
+                                    else promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The hash must have a 'name' string"));
+                                    return;
+                                }
+                                if (!IsHMACMatched(&finalBinary, a_hash_name)) {
+                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The hash does not match the key"));
+                                    return;
+                                }
+                                if (finalBinary.size() * 8 < 8 || finalBinary.size() * 8 > 4096 || finalBinary.size() * 8 % 8 != 0) {
+                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] HMAC key length must be 8-4096 bits and multiple of 8"));
+                                    return;
+                                }
+                            }
+                            else if (a_name == "HKDF") {
+                                if (!hash_valid) {
+                                    if (!has_hash) promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The algorithm must have a 'hash' object"));
+                                    else promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The hash must have a 'name' string"));
+                                    return;
+                                }
+                                if (finalBinary.empty() || finalBinary.size() * 8 % 8 != 0) {
+                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] HKDF key length must be a non-empty multiple of 8 bits"));
+                                    return;
+                                }
+                            }
+                            else if (a_name == "PBKDF2") {
+                                if (has_hash && !hash_valid) {
+                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The hash must have a 'name' string"));
+                                    return;
+                                }
+                                if (has_a_iterations && a_iterations == 0) {
+                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] PBKDF2 iterations must be greater than 0"));
+                                    return;
+                                }
+                                if (has_a_length && (a_length == 0 || a_length % 8 != 0)) {
+                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] PBKDF2 length must be a positive multiple of 8 bits"));
+                                    return;
+                                }
+                                if (finalBinary.empty() || finalBinary.size() * 8 % 8 != 0) {
+                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] PBKDF2 key length must be a non-empty multiple of 8 bits"));
+                                    return;
+                                }
+                            }
+                            else if (a_name.find("AES") != std::string::npos) {
+                                if (has_a_length) {
+                                    if (a_length < 128 || a_length > 512 || a_length % 8 != 0) {
+                                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] AES key length must be 128-512 bits and multiple of 8"));
+                                        return;
+                                    }
+                                    if (!IsAESMatched(&finalBinary, a_length)) {
+                                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The length does not match the key"));
+                                        return;
+                                    }
+                                }
+                                else {
+                                    a_length = finalBinary.size() * 8;
+                                    SetAttribute(ctx, js_algorithm, "length", NewNumber(ctx, (double)a_length), 0);
+                                }
+                            }
+                            else if (a_name == "ChaCha20-Poly1305") {
+                                if (finalBinary.size() * 8 < 128 || finalBinary.size() * 8 > 256 || finalBinary.size() * 8 % 8 != 0) {
+                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] ChaCha20-Poly1305 key length must be 128-256 bits and multiple of 8"));
+                                    return;
+                                }
+                            }
+                            else {
+                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The algorithm does not match the key"));
+                                return;
+                            }
+
+                            JSV returnValue = NewObject(ctx);
+                            SetSymbolName(ctx, returnValue, "CryptoKey");
+                            SetAttribute(ctx, returnValue, "type", "secret", 0);
+                            SetAttribute(ctx, returnValue, "algorithm", js_algorithm, 0);
+                            SetAttribute(ctx, returnValue, "extractable", js_extractable, 0);
+                            SetAttribute(ctx, returnValue, "usages", js_keyUsages, 0);
+
+                            JSV privateObject = NewObject(ctx);
+                            JSV data = NewUint8Array(ctx, finalBinary);
+                            SetAttribute(ctx, privateObject, "data", data, 0);
+                            SetAttribute(ctx, privateObject, "_isPrivate", NewBool(ctx, true), 0);
+                            SetAttribute(ctx, returnValue, "internal", privateObject, 0);
+
+                            promise.Resolve(ctx, returnValue);
+                        }
+                        });
+                };
+
+            // —— 异步任务：纯二进制 / JWK 解析与密钥计算 ——
+            AddAsyncTask(ctx, [=, keyBinary = std::move(keyBinary), jwk = std::move(jwk)]() mutable {
+                BYTEBUFFER finalBinary = std::move(keyBinary);
+                PKDATA pkd = {};
+
+                if (isJwk) {
+                    if (!jwk.count(L"kty") || !jwk[L"kty"].isString()) {
+                        end(false, {}, {}, "[crypto.subtle.importKey] The keyData must have a 'kty' string property");
+                        return;
+                    }
+
+                    if (jwk[L"kty"].get<std::string>() == "oct") {
                         std::string name = "";
                         std::string hash = "";
                         uint64_t length = 0;
 
                         if (jwk.count(L"alg")) {
-
                             std::string alg = jwk[L"alg"].get<std::string>();
                             uint64_t alen = alg.length();
 
@@ -14029,6 +14094,7 @@ namespace cjs {
                             std::string alg6 = (alg.length() >= 6) ? alg.substr(5, 1) : "";
                             std::string alg7 = (alg.length() >= 7) ? alg.substr(6, 1) : "";
                             std::string alg8 = (alg.length() >= 8) ? alg.substr(7, 1) : "";
+
                             if (alg1 + alg2 == "HS") {
                                 name = "HMAC";
                                 if (alg4 != "-" && alen >= 5) {
@@ -14049,36 +14115,25 @@ namespace cjs {
                                 name = "ChaCha20-Poly1305";
                             }
                             else {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The algorithm '" + alg + "' is not supported"));
+                                end(false, {}, {}, "[crypto.subtle.importKey] The algorithm '" + alg + "' is not supported");
                                 return;
                             }
                             if (name != "" && name != a_name) {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The algorithm does not match the keyData"));
+                                end(false, {}, {}, "[crypto.subtle.importKey] The algorithm does not match the keyData");
                                 return;
                             }
-
                         }
 
-                        BYTEBUFFER tempKeyBinary = {};
                         if (!jwk.count(L"k") || !jwk[L"k"].isString()) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The keyData must have a 'k' string property"));
+                            end(false, {}, {}, "[crypto.subtle.importKey] The keyData must have a 'k' string property");
                             return;
                         }
-                        tempKeyBinary = ToBinary(jwk[L"k"].get<std::string>());
+                        BYTEBUFFER tempKeyBinary = ToBinary(jwk[L"k"].get<std::string>());
                         if (!BaseXToBinary(&tempKeyBinary, 64, true)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The 'k' value is not a valid base64url string"));
+                            end(false, {}, {}, "[crypto.subtle.importKey] The 'k' value is not a valid base64url string", true);
                             return;
                         }
 
-                        JSV js_a_hash = {};
-                        JSV js_hash_name = {};
-                        std::string a_hash_name = "";
-                        if (name == "HMAC" && (!ReadObjectProperty(ctx, js_algorithm, "hash", js_a_hash) || !ReadObjectProperty(ctx, js_a_hash, "name", js_hash_name) || !ReadJSValueAsString(ctx, js_hash_name, a_hash_name))) {
-                            if (!js_a_hash.isValid()) promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The algorithm must have a 'hash' object"));
-                            else if (!js_hash_name.isValid()) promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The hash must have a 'name' string"));
-                            else promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The hash does not match the keyData"));
-                            return;
-                        }
                         bool lengthCheckPass = true;
                         if (name.find("AES") != std::string::npos && length > 0) {
                             lengthCheckPass = (tempKeyBinary.size() * 8 >= 128 && tempKeyBinary.size() * 8 <= 512 && tempKeyBinary.size() * 8 % 8 == 0);
@@ -14090,20 +14145,19 @@ namespace cjs {
                             lengthCheckPass = (hash == a_hash_name);
                         }
                         if (!lengthCheckPass) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The algorithm does not match the keyData"));
+                            end(false, {}, {}, "[crypto.subtle.importKey] The algorithm does not match the keyData");
                             return;
                         }
 
-                        keyBinary = std::move(tempKeyBinary);
+                        finalBinary = std::move(tempKeyBinary);
                     }
                     else if (jwk[L"kty"].get<std::string>() == "RSA") {
-
                         if (!jwk.count(L"e") || !jwk[L"e"].isString()) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The keyData must have an 'e' string property"));
+                            end(false, {}, {}, "[crypto.subtle.importKey] The keyData must have an 'e' string property");
                             return;
                         }
                         if (!jwk.count(L"n") || !jwk[L"n"].isString()) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The keyData must have an 'n' string property"));
+                            end(false, {}, {}, "[crypto.subtle.importKey] The keyData must have an 'n' string property");
                             return;
                         }
 
@@ -14111,7 +14165,6 @@ namespace cjs {
                         std::string hash = "";
 
                         if (jwk.count(L"alg")) {
-
                             std::string alg = jwk[L"alg"].get<std::string>();
                             uint64_t alen = alg.length();
                             std::string alg1 = (alg.length() >= 1) ? alg.substr(0, 1) : "";
@@ -14123,9 +14176,6 @@ namespace cjs {
                             std::string alg7 = (alg.length() >= 7) ? alg.substr(6, 1) : "";
                             std::string alg8 = (alg.length() >= 8) ? alg.substr(7, 1) : "";
                             std::string alg9 = (alg.length() >= 9) ? alg.substr(8, 1) : "";
-                            std::string alg10 = (alg.length() >= 10) ? alg.substr(9, 1) : "";
-                            std::string alg11 = (alg.length() >= 11) ? alg.substr(10, 1) : "";
-                            std::string alg12 = (alg.length() >= 12) ? alg.substr(11, 1) : "";
 
                             if (alg1 + alg2 == "PS") {
                                 name = "RSA-PSS";
@@ -14142,132 +14192,112 @@ namespace cjs {
                                 hash = "";
                             }
                             else {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The algorithm '" + alg + "' is not supported"));
-                                return;
-                            }
-
-                            JSV js_a_hash = {};
-                            JSV js_hash_name = {};
-                            std::string a_hash_name = "";
-                            if (!ReadObjectProperty(ctx, js_algorithm, "hash", js_a_hash) || !ReadObjectProperty(ctx, js_a_hash, "name", js_hash_name) || !ReadJSValueAsString(ctx, js_hash_name, a_hash_name)) {
-                                if (!js_a_hash.isValid()) promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The algorithm must have a 'hash' object"));
-                                else if (!js_hash_name.isValid()) promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The hash must have a 'name' string"));
-                                else promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The hash does not match the keyData"));
+                                end(false, {}, {}, "[crypto.subtle.importKey] The algorithm '" + alg + "' is not supported");
                                 return;
                             }
 
                             if (name != a_name || (hash != "" && hash != a_hash_name)) {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The algorithm does not match the keyData"));
+                                end(false, {}, {}, "[crypto.subtle.importKey] The algorithm does not match the keyData");
                                 return;
                             }
-
                         }
 
-                        BYTEBUFFER tempKeyBinary = {};
                         BYTEBUFFER e = ToBinary(jwk[L"e"].get<std::string>());
                         BYTEBUFFER n = ToBinary(jwk[L"n"].get<std::string>());
                         if (e.empty()) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The 'e' property must not be empty"));
+                            end(false, {}, {}, "[crypto.subtle.importKey] The 'e' property must not be empty");
                             return;
                         }
                         if (n.empty()) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The 'n' property must not be empty"));
+                            end(false, {}, {}, "[crypto.subtle.importKey] The 'n' property must not be empty");
                             return;
                         }
                         if (!BaseXToBinary(&e, 64, true)) {
-                            promise.Reject(ctx, NewSyntaxError(ctx, "[crypto.subtle.importKey] The 'e' value is not a valid base64url string"));
+                            end(false, {}, {}, "[crypto.subtle.importKey] The 'e' value is not a valid base64url string", true);
                             return;
                         }
                         if (!BaseXToBinary(&n, 64, true)) {
-                            promise.Reject(ctx, NewSyntaxError(ctx, "[crypto.subtle.importKey] The 'n' value is not a valid base64url string"));
+                            end(false, {}, {}, "[crypto.subtle.importKey] The 'n' value is not a valid base64url string", true);
                             return;
                         }
 
+                        BYTEBUFFER tempKeyBinary = {};
                         BYTEBUFFER d = {}, p = {}, q = {}, dp = {}, dq = {}, qi = {};
                         bool hasPrivateParams = jwk.count(L"d") && jwk[L"d"].isString();
                         if (hasPrivateParams) {
                             d = ToBinary(jwk[L"d"].get<std::string>());
                             if (d.empty()) {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The 'd' property must not be empty"));
+                                end(false, {}, {}, "[crypto.subtle.importKey] The 'd' property must not be empty");
                                 return;
                             }
                             if (!BaseXToBinary(&d, 64, true)) {
-                                promise.Reject(ctx, NewSyntaxError(ctx, "[crypto.subtle.importKey] The 'd' value is not a valid base64url string"));
+                                end(false, {}, {}, "[crypto.subtle.importKey] The 'd' value is not a valid base64url string", true);
                                 return;
                             }
 
                             if (jwk.count(L"p") && jwk[L"p"].isString()) {
                                 p = ToBinary(jwk[L"p"].get<std::string>());
                                 if (!p.empty() && !BaseXToBinary(&p, 64, true)) {
-                                    promise.Reject(ctx, NewSyntaxError(ctx, "[crypto.subtle.importKey] The 'p' value is not a valid base64url string"));
+                                    end(false, {}, {}, "[crypto.subtle.importKey] The 'p' value is not a valid base64url string", true);
                                     return;
                                 }
                             }
                             if (jwk.count(L"q") && jwk[L"q"].isString()) {
                                 q = ToBinary(jwk[L"q"].get<std::string>());
                                 if (!q.empty() && !BaseXToBinary(&q, 64, true)) {
-                                    promise.Reject(ctx, NewSyntaxError(ctx, "[crypto.subtle.importKey] The 'q' value is not a valid base64url string"));
+                                    end(false, {}, {}, "[crypto.subtle.importKey] The 'q' value is not a valid base64url string", true);
                                     return;
                                 }
                             }
                             if (jwk.count(L"dp") && jwk[L"dp"].isString()) {
                                 dp = ToBinary(jwk[L"dp"].get<std::string>());
                                 if (!dp.empty() && !BaseXToBinary(&dp, 64, true)) {
-                                    promise.Reject(ctx, NewSyntaxError(ctx, "[crypto.subtle.importKey] The 'dp' value is not a valid base64url string"));
+                                    end(false, {}, {}, "[crypto.subtle.importKey] The 'dp' value is not a valid base64url string", true);
                                     return;
                                 }
                             }
                             if (jwk.count(L"dq") && jwk[L"dq"].isString()) {
                                 dq = ToBinary(jwk[L"dq"].get<std::string>());
                                 if (!dq.empty() && !BaseXToBinary(&dq, 64, true)) {
-                                    promise.Reject(ctx, NewSyntaxError(ctx, "[crypto.subtle.importKey] The 'dq' value is not a valid base64url string"));
+                                    end(false, {}, {}, "[crypto.subtle.importKey] The 'dq' value is not a valid base64url string", true);
                                     return;
                                 }
                             }
                             if (jwk.count(L"qi") && jwk[L"qi"].isString()) {
                                 qi = ToBinary(jwk[L"qi"].get<std::string>());
                                 if (!qi.empty() && !BaseXToBinary(&qi, 64, true)) {
-                                    promise.Reject(ctx, NewSyntaxError(ctx, "[crypto.subtle.importKey] The 'qi' value is not a valid base64url string"));
+                                    end(false, {}, {}, "[crypto.subtle.importKey] The 'qi' value is not a valid base64url string", true);
                                     return;
                                 }
                             }
 
                             if (!crypto_subtle_importKey_jwk_RSA(&e, &n, &tempKeyBinary, &d, &p, &q, &dp, &dq, &qi)) {
-                                promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.importKey] Failed to parse the key"));
+                                end(false, {}, {}, "[crypto.subtle.importKey] Failed to parse the key", false, true);
                                 return;
                             }
                         }
                         else {
                             if (!crypto_subtle_importKey_jwk_RSA(&e, &n, &tempKeyBinary)) {
-                                promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.importKey] Failed to parse the key"));
+                                end(false, {}, {}, "[crypto.subtle.importKey] Failed to parse the key", false, true);
                                 return;
                             }
                         }
 
-                        keyBinary = std::move(tempKeyBinary);
+                        finalBinary = std::move(tempKeyBinary);
                     }
                     else if (jwk[L"kty"].get<std::string>() == "EC") {
-
                         if (!jwk.count(L"crv") || !jwk[L"crv"].isString()) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The keyData must have a 'crv' string property"));
+                            end(false, {}, {}, "[crypto.subtle.importKey] The keyData must have a 'crv' string property");
                             return;
                         }
                         std::string crv = jwk[L"crv"].get<std::string>();
 
                         if (!allowedCurveName.count(crv)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The namedCurve '" + crv + "' is not supported"));
+                            end(false, {}, {}, "[crypto.subtle.importKey] The namedCurve '" + crv + "' is not supported");
                             return;
                         }
-
-                        JSV js_a_namedCurve = {};
-                        std::string a_named_curve = "";
-                        if (!ReadObjectProperty(ctx, js_algorithm, "namedCurve", js_a_namedCurve) || !ReadJSValueAsString(ctx, js_a_namedCurve, a_named_curve)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The algorithm must have a 'namedCurve' string"));
-                            return;
-                        }
-
                         if (a_named_curve != crv) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The algorithm does not match the keyData"));
+                            end(false, {}, {}, "[crypto.subtle.importKey] The algorithm does not match the keyData");
                             return;
                         }
 
@@ -14276,62 +14306,62 @@ namespace cjs {
                         if (hasPrivateKey) {
                             BYTEBUFFER d = ToBinary(jwk[L"d"].get<std::string>());
                             if (d.empty()) {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The 'd' property must not be empty"));
+                                end(false, {}, {}, "[crypto.subtle.importKey] The 'd' property must not be empty");
                                 return;
                             }
                             if (!BaseXToBinary(&d, 64, true)) {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The 'd' value is not a valid base64url string"));
+                                end(false, {}, {}, "[crypto.subtle.importKey] The 'd' value is not a valid base64url string");
                                 return;
                             }
                             if (!crypto_subtle_importKey_jwk_EC(crv, &tempKeyBinary, &d)) {
-                                promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.importKey] Failed to parse the key"));
+                                end(false, {}, {}, "[crypto.subtle.importKey] Failed to parse the key", false, true);
                                 return;
                             }
                         }
                         else {
                             if (!jwk.count(L"x") || !jwk[L"x"].isString()) {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The keyData must have an 'x' string property"));
+                                end(false, {}, {}, "[crypto.subtle.importKey] The keyData must have an 'x' string property");
                                 return;
                             }
                             if (!jwk.count(L"y") || !jwk[L"y"].isString()) {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The keyData must have a 'y' string property"));
+                                end(false, {}, {}, "[crypto.subtle.importKey] The keyData must have a 'y' string property");
                                 return;
                             }
                             BYTEBUFFER x = ToBinary(jwk[L"x"].get<std::string>());
                             BYTEBUFFER y = ToBinary(jwk[L"y"].get<std::string>());
                             if (x.empty()) {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The 'x' property must not be empty"));
+                                end(false, {}, {}, "[crypto.subtle.importKey] The 'x' property must not be empty");
                                 return;
                             }
                             if (y.empty()) {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The 'y' property must not be empty"));
+                                end(false, {}, {}, "[crypto.subtle.importKey] The 'y' property must not be empty");
                                 return;
                             }
                             if (!BaseXToBinary(&x, 64, true)) {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The 'x' value is not a valid base64url string"));
+                                end(false, {}, {}, "[crypto.subtle.importKey] The 'x' value is not a valid base64url string", true);
                                 return;
                             }
                             if (!BaseXToBinary(&y, 64, true)) {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The 'y' value is not a valid base64url string"));
+                                end(false, {}, {}, "[crypto.subtle.importKey] The 'y' value is not a valid base64url string", true);
                                 return;
                             }
                             if (!crypto_subtle_importKey_jwk_EC(crv, &tempKeyBinary, nullptr, &x, &y)) {
-                                promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.importKey] Failed to parse the key"));
+                                end(false, {}, {}, "[crypto.subtle.importKey] Failed to parse the key", false, true);
                                 return;
                             }
                         }
 
-                        keyBinary = std::move(tempKeyBinary);
+                        finalBinary = std::move(tempKeyBinary);
                     }
                     else if (jwk[L"kty"].get<std::string>() == "OKP") {
                         if (!jwk.count(L"crv") || !jwk[L"crv"].isString()) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The keyData must have a 'crv' string property"));
+                            end(false, {}, {}, "[crypto.subtle.importKey] The keyData must have a 'crv' string property");
                             return;
                         }
                         std::string crv = jwk[L"crv"].get<std::string>();
 
                         if (crv != a_name) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The algorithm does not match the keyData"));
+                            end(false, {}, {}, "[crypto.subtle.importKey] The algorithm does not match the keyData");
                             return;
                         }
 
@@ -14342,15 +14372,15 @@ namespace cjs {
                             if (hasPrivateKey) {
                                 BYTEBUFFER d = ToBinary(jwk[L"d"].get<std::string>());
                                 if (d.empty()) {
-                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The 'd' property must not be empty"));
+                                    end(false, {}, {}, "[crypto.subtle.importKey] The 'd' property must not be empty");
                                     return;
                                 }
                                 if (!BaseXToBinary(&d, 64, true)) {
-                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The 'd' value is not a valid base64url string"));
+                                    end(false, {}, {}, "[crypto.subtle.importKey] The 'd' value is not a valid base64url string", true);
                                     return;
                                 }
                                 if (d.size() != 32) {
-                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The 'd' value must be 32 bytes"));
+                                    end(false, {}, {}, "[crypto.subtle.importKey] The 'd' value must be 32 bytes");
                                     return;
                                 }
                                 pkd.isValid = true;
@@ -14360,20 +14390,20 @@ namespace cjs {
                             }
                             else {
                                 if (!jwk.count(L"x") || !jwk[L"x"].isString()) {
-                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The keyData must have an 'x' string property"));
+                                    end(false, {}, {}, "[crypto.subtle.importKey] The keyData must have an 'x' string property");
                                     return;
                                 }
                                 BYTEBUFFER x = ToBinary(jwk[L"x"].get<std::string>());
                                 if (x.empty()) {
-                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The 'x' property must not be empty"));
+                                    end(false, {}, {}, "[crypto.subtle.importKey] The 'x' property must not be empty");
                                     return;
                                 }
                                 if (!BaseXToBinary(&x, 64, true)) {
-                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The 'x' value is not a valid base64url string"));
+                                    end(false, {}, {}, "[crypto.subtle.importKey] The 'x' value is not a valid base64url string", true);
                                     return;
                                 }
                                 if (x.size() != 32) {
-                                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The 'x' value must be 32 bytes"));
+                                    end(false, {}, {}, "[crypto.subtle.importKey] The 'x' value must be 32 bytes");
                                     return;
                                 }
                                 pkd.isValid = true;
@@ -14383,207 +14413,16 @@ namespace cjs {
                             }
                         }
                         else {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The curve '" + crv + "' is not supported"));
+                            end(false, {}, {}, "[crypto.subtle.importKey] The curve '" + crv + "' is not supported");
                             return;
                         }
 
-                        keyBinary = std::move(tempKeyBinary);
+                        finalBinary = std::move(tempKeyBinary);
                     }
                 }
 
-                if ((a_name.find("AES") == std::string::npos && a_name != "HMAC" && a_name != "ChaCha20-Poly1305") && a_name != "Ed25519" && a_name != "X25519" && a_name != "HKDF" && a_name != "PBKDF2") pkd = GetPKData(&keyBinary);
-
-                if (pkd.isValid) {
-
-                    if (format == "raw" || (pkd.isPrivate && format == "spki") || (!pkd.isPrivate && format == "pkcs8")) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] Cannot import " + std::string(pkd.isPrivate ? "private" : "public") + " key as format '" + format + "'"));
-                        return;
-                    }
-
-                    if (pkd.name == a_name || (a_name.find("RSA") != std::string::npos && pkd.name == "RSA") || (a_name == "ECDH" && pkd.name == "ECDSA") || (a_name == "ECDSA" && pkd.name == "ECDH")) {
-                        if (pkd.modulusLength != 0) {
-                            if (pkd.modulusLength >= 1024 && pkd.modulusLength <= 16384 && pkd.modulusLength % 8 == 0) {
-                                SetAttribute(ctx, js_algorithm, "modulusLength", NewNumber(ctx, (double)pkd.modulusLength), 0);
-                            }
-                            else {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] RSA modulus length must be 1024-16384 bits and multiple of 8"));
-                                return;
-                            }
-                        }
-                        if (pkd.publicExponent != 0) {
-                            if (pkd.publicExponent > 1 && pkd.publicExponent % 2 == 1) {
-                                SetAttribute(ctx, js_algorithm, "publicExponent", NewNumber(ctx, (double)pkd.publicExponent), 0);
-                            }
-                            else {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] RSA public exponent must be odd and greater than 1"));
-                                return;
-                            }
-                        }
-                    }
-                    else {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The algorithm does not match the key"));
-                        return;
-                    }
-
-                    for (std::string usage : keyUsages) {
-                        if (!allowedKeyUsagesList[a_name].count(usage) || (allowedKeyUsagesList[a_name][usage] != "" && allowedKeyUsagesList[a_name][usage] != std::string((pkd.isPrivate) ? "b" : "a"))) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The keyUsage '" + usage + "' is not supported"));
-                            return;
-                        }
-                    }
-
-                    JSV returnValue = NewObject(ctx);
-                    SetSymbolName(ctx, returnValue, "CryptoKey");
-                    SetAttribute(ctx, returnValue, "type", pkd.isPrivate ? "private" : "public", 0);
-                    SetAttribute(ctx, returnValue, "algorithm", js_algorithm, 0);
-                    SetAttribute(ctx, returnValue, "extractable", js_extractable, 0);
-                    SetAttribute(ctx, returnValue, "usages", js_keyUsages, 0);
-
-                    JSV privateObject = NewObject(ctx);
-                    JSV data = NewUint8Array(ctx, keyBinary);
-                    SetAttribute(ctx, privateObject, "data", data, 0);
-                    SetAttribute(ctx, privateObject, "_isPrivate", NewBool(ctx, true), 0);
-                    SetAttribute(ctx, returnValue, "internal", privateObject, 0);
-
-                    promise.Resolve(ctx, returnValue);
-
-                }
-                else {
-
-                    if (a_name == "HMAC") {
-                        JSV js_a_hash = {};
-                        JSV js_hash_name = {};
-                        std::string a_hash_name = "";
-                        if (!ReadObjectProperty(ctx, js_algorithm, "hash", js_a_hash) || !ReadObjectProperty(ctx, js_a_hash, "name", js_hash_name) || !ReadJSValueAsString(ctx, js_hash_name, a_hash_name)) {
-                            if (!js_a_hash.isValid()) promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The algorithm must have a 'hash' object"));
-                            else if (!js_hash_name.isValid()) promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The hash must have a 'name' string"));
-                            else promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The hash does not match the key"));
-                            return;
-                        }
-                        if (!IsHMACMatched(&keyBinary, a_hash_name)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The hash does not match the key"));
-                            return;
-                        }
-                        if (keyBinary.size() * 8 < 8 || keyBinary.size() * 8 > 4096 || keyBinary.size() * 8 % 8 != 0) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] HMAC key length must be 8-4096 bits and multiple of 8"));
-                            return;
-                        }
-                    }
-                    else if (a_name == "HKDF") {
-                        JSV js_a_hash = {};
-                        JSV js_hash_name = {};
-                        std::string a_hash_name = "";
-                        if (!ReadObjectProperty(ctx, js_algorithm, "hash", js_a_hash) || !ReadObjectProperty(ctx, js_a_hash, "name", js_hash_name) || !ReadJSValueAsString(ctx, js_hash_name, a_hash_name)) {
-                            if (!js_a_hash.isValid()) promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The algorithm must have a 'hash' object"));
-                            else if (!js_hash_name.isValid()) promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The hash must have a 'name' string"));
-                            else promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The hash does not match the key"));
-                            return;
-                        }
-                        if (keyBinary.empty() || keyBinary.size() * 8 % 8 != 0) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] HKDF key length must be a non-empty multiple of 8 bits"));
-                            return;
-                        }
-                    }
-                    else if (a_name == "PBKDF2") {
-                        JSV js_a_hash = {};
-                        JSV js_hash_name = {};
-                        std::string a_hash_name = "";
-                        if (ReadObjectProperty(ctx, js_algorithm, "hash", js_a_hash) && js_a_hash.isValid()) {
-                            if (!ReadObjectProperty(ctx, js_a_hash, "name", js_hash_name) || !ReadJSValueAsString(ctx, js_hash_name, a_hash_name)) {
-                                if (!js_hash_name.isValid()) promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The hash must have a 'name' string"));
-                                else promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The hash does not match the key"));
-                                return;
-                            }
-                        }
-
-                        JSV js_salt = {};
-                        BYTEBUFFER a_salt;
-                        if (ReadObjectProperty(ctx, js_algorithm, "salt", js_salt) && js_salt.isValid()) {
-                            if (!ReadJSValueAsArrayBuffer(ctx, js_salt, a_salt)) {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] PBKDF2 salt must be a binary value (ArrayBuffer/Uint8Array)"));
-                                return;
-                            }
-                        }
-
-                        JSV js_iterations = {};
-                        uint64_t a_iterations = 0;
-                        if (ReadObjectProperty(ctx, js_algorithm, "iterations", js_iterations) && js_iterations.isValid()) {
-                            if (!ReadJSValueAsUint64(ctx, js_iterations, a_iterations) || a_iterations == 0) {
-                                if (a_iterations == 0) promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] PBKDF2 iterations must be greater than 0"));
-                                else promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] PBKDF2 iterations must be a positive integer"));
-                                return;
-                            }
-                        }
-
-                        JSV js_length = {};
-                        uint64_t a_length = 0;
-                        bool has_length = ReadObjectProperty(ctx, js_algorithm, "length", js_length);
-                        if (has_length) {
-                            if (!ReadJSValueAsUint64(ctx, js_length, a_length) || a_length == 0 || a_length % 8 != 0) {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] PBKDF2 length must be a positive multiple of 8 bits"));
-                                return;
-                            }
-                        }
-
-                        if (keyBinary.empty() || keyBinary.size() * 8 % 8 != 0) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] PBKDF2 key length must be a non-empty multiple of 8 bits"));
-                            return;
-                        }
-                    }
-                    else if (a_name.find("AES") != std::string::npos) {
-                        JSV js_a_length = {};
-                        uint64_t a_length = 0;
-                        bool hasLength = ReadObjectProperty(ctx, js_algorithm, "length", js_a_length) && ReadJSValueAsUint64(ctx, js_a_length, a_length);
-
-                        if (hasLength) {
-                            if (a_length < 128 || a_length > 512 || a_length % 8 != 0) {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] AES key length must be 128-512 bits and multiple of 8"));
-                                return;
-                            }
-                            if (!IsAESMatched(&keyBinary, a_length)) {
-                                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The length does not match the key"));
-                                return;
-                            }
-                        }
-                        else {
-                            a_length = keyBinary.size() * 8;
-                            SetAttribute(ctx, js_algorithm, "length", NewNumber(ctx, (double)a_length), 0);
-                        }
-                    }
-                    else if (a_name == "ChaCha20-Poly1305") {
-                        if (keyBinary.size() * 8 < 128 || keyBinary.size() * 8 > 256 || keyBinary.size() * 8 % 8 != 0) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] ChaCha20-Poly1305 key length must be 128-256 bits and multiple of 8"));
-                            return;
-                        }
-                    }
-                    else {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.importKey] The algorithm does not match the key"));
-                        return;
-                    }
-
-                    JSV returnValue = NewObject(ctx);
-                    SetSymbolName(ctx, returnValue, "CryptoKey");
-                    SetAttribute(ctx, returnValue, "type", "secret", 0);
-                    SetAttribute(ctx, returnValue, "algorithm", js_algorithm, 0);
-                    SetAttribute(ctx, returnValue, "extractable", js_extractable, 0);
-                    SetAttribute(ctx, returnValue, "usages", js_keyUsages, 0);
-
-                    JSV privateObject = NewObject(ctx);
-                    JSV data = NewUint8Array(ctx, keyBinary);
-                    SetAttribute(ctx, privateObject, "data", data, 0);
-                    SetAttribute(ctx, privateObject, "_isPrivate", NewBool(ctx, true), 0);
-                    SetAttribute(ctx, returnValue, "internal", privateObject, 0);
-
-                    promise.Resolve(ctx, returnValue);
-
-                }
-
-                return;
+                end(true, finalBinary, pkd);
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
 
             return promise.promise.get(1);
         }
@@ -14661,77 +14500,12 @@ namespace cjs {
                 return promise.promise.get(1);
             }
 
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
-            }
-
-            if (a_name == "HMAC") {
-
-                std::unordered_map<std::string, std::string>& allowedThisKeyUsagesList = allowedKeyUsagesList[a_name];
-                for (std::string usage : keyUsages) {
-                    if (!allowedThisKeyUsagesList.count(usage)) {
-                        promise.Reject(ctx, NewString(ctx, "[crypto.subtle.generateKey] The keyUsage '" + usage + "' is not supported in this algorithm"));
-                        return promise.promise.get(1);
-                    }
-                }
-
-                JSV js_a_hash = {};
-                if (!ReadObjectProperty(ctx, uAlgorithm, "hash", js_a_hash) || !JS_IsObject(js_a_hash.get())) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] HMAC algorithm must have a 'hash' object property"));
-                    return promise.promise.get(1);
-                }
-
-                JSV js_hash_name = {};
-                std::string hash_name = "";
-                if (!ReadObjectProperty(ctx, js_a_hash, "name", js_hash_name) || !ReadJSValueAsString(ctx, js_hash_name, hash_name)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] HMAC hash must have a 'name' string property"));
-                    return promise.promise.get(1);
-                }
-
-                if (hash_name != "SHA-1" && hash_name != "SHA-224" && hash_name != "SHA-256" && hash_name != "SHA-384" && hash_name != "SHA-512" && hash_name != "SHA-3-224" && hash_name != "SHA-3-256" && hash_name != "SHA-3-384" && hash_name != "SHA-3-512" && hash_name != "SHA-512/224" && hash_name != "SHA-512/256") {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] Unsupported HMAC hash algorithm : " + hash_name));
-                    return promise.promise.get(1);
-                }
-
-                JSV js_a_length = {};
-                uint64_t a_length = 0;
-                if (ReadObjectProperty(ctx, uAlgorithm, "length", js_a_length)) {
-                    uint64_t a_length_temp = 0;
-                    if (!ReadJSValueAsUint64(ctx, js_a_length, a_length_temp) || a_length_temp == 0) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] The key length must be an positive integer"));
-                        return promise.promise.get(1);
-                    }
-                    if (a_length_temp % 8 != 0 || a_length_temp < 8 || a_length_temp > 4096) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] HMAC key length must be a multiple of 8 bits and between 8 and 4096 bits"));
-                        return promise.promise.get(1);
-                    }
-                    a_length = a_length_temp / 8;
-                }
-
-                if (a_length == 0) {
-                    if (hash_name == "SHA-1") a_length = 20;
-                    else if (hash_name == "SHA-224") a_length = 28;
-                    else if (hash_name == "SHA-256") a_length = 32U;
-                    else if (hash_name == "SHA-384") a_length = 48;
-                    else if (hash_name == "SHA-512") a_length = 32U;
-                    else if (hash_name == "SHA-3-224") a_length = 28U;
-                    else if (hash_name == "SHA-3-256") a_length = 32U;
-                    else if (hash_name == "SHA-3-384") a_length = 48U;
-                    else if (hash_name == "SHA-3-512") a_length = 64U;
-                    else if (hash_name == "SHA-512/224") a_length = 28U;
-                    else if (hash_name == "SHA-512/256") a_length = 32U;
-                }
-
-                std::thread t([=]() {
-
-                    BYTEBUFFER keyBinary = {};
-                    if (!crypto_subtle_generateKey_HMAC(hash_name, a_length * 8, &keyBinary)) {
+            auto end_hmac = [=](const bool& genResult, const BYTEBUFFER& keyBinary) {
+                AddNativeTask(ctx, [=, genResult = std::move(genResult), keyBinary = std::move(keyBinary)] mutable {
+                    if (!genResult) {
                         promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.generateKey] Failed to generate key"));
                         return;
                     }
-
                     JSV returnValue = NewObject(ctx);
                     SetSymbolName(ctx, returnValue, "CryptoKey");
                     SetAttribute(ctx, returnValue, "type", "secret", 0);
@@ -14746,37 +14520,15 @@ namespace cjs {
                     SetAttribute(ctx, returnValue, "internal", privateObject, 0);
 
                     promise.Resolve(ctx, returnValue);
-
                     });
-                Thread td = std::move(t);
-                td.detach();
-                jsmdPtr->threadList.push_back(td);
-                update(ctx);
+                };
 
-            }
-            else if (a_name == "AES-GCM" || a_name == "AES-CBC" || a_name == "AES-CTR" || a_name == "AES-KW") {
-
-                JSV js_a_length = {};
-                uint64_t a_length = 0;
-                if (!ReadObjectProperty(ctx, uAlgorithm, "length", js_a_length) || !ReadJSValueAsUint64(ctx, js_a_length, a_length)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] The key length must be an positive integer"));
-                    return promise.promise.get(1);
-                }
-
-                if (a_length % 8 != 0 || a_length < 128 || a_length > 512) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] AES key length must be a multiple of 8 bits and between 128 and 512 bits"));
-                    return promise.promise.get(1);
-                }
-
-                std::thread t([=]() {
-
-                    BYTEBUFFER keyBinary = {};
-                    if (!crypto_subtle_generateKey_AES(a_length, a_name.substr(4), &keyBinary)) {
+            auto end_aes = [=](const bool& genResult, const BYTEBUFFER& keyBinary) {
+                AddNativeTask(ctx, [=, genResult = std::move(genResult), keyBinary = std::move(keyBinary)] mutable {
+                    if (!genResult) {
                         promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.generateKey] Failed to generate key"));
                         return;
                     }
-
-
                     JSV returnValue = NewObject(ctx);
                     SetSymbolName(ctx, returnValue, "CryptoKey");
                     SetAttribute(ctx, returnValue, "type", "secret", 0);
@@ -14791,33 +14543,15 @@ namespace cjs {
                     SetAttribute(ctx, returnValue, "internal", privateObject, 0);
 
                     promise.Resolve(ctx, returnValue);
-
                     });
-                Thread td = std::move(t);
-                td.detach();
-                jsmdPtr->threadList.push_back(td);
-                update(ctx);
+                };
 
-            }
-            else if (a_name == "ChaCha20-Poly1305") {
-
-                JSV js_a_length = {};
-                uint64_t a_length = 256;
-                if (ReadObjectProperty(ctx, uAlgorithm, "length", js_a_length)) {
-                    if (!ReadJSValueAsUint64(ctx, js_a_length, a_length) || a_length % 8 != 0 || a_length < 128 || a_length > 256) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] ChaCha20-Poly1305 key length must be a multiple of 8 bits and between 128 and 256 bits"));
-                        return promise.promise.get(1);
-                    }
-                }
-
-                std::thread t([=]() {
-
-                    BYTEBUFFER keyBinary = {};
-                    if (!crypto_subtle_generateKey_ChaCha20Poly1305(&keyBinary)) {
+            auto end_chacha = [=](const bool& genResult, const BYTEBUFFER& keyBinary) {
+                AddNativeTask(ctx, [=, genResult = std::move(genResult), keyBinary = std::move(keyBinary)] mutable {
+                    if (!genResult) {
                         promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.generateKey] Failed to generate key"));
                         return;
                     }
-
                     JSV returnValue = NewObject(ctx);
                     SetSymbolName(ctx, returnValue, "CryptoKey");
                     SetAttribute(ctx, returnValue, "type", "secret", 0);
@@ -14832,84 +14566,15 @@ namespace cjs {
                     SetAttribute(ctx, returnValue, "internal", privateObject, 0);
 
                     promise.Resolve(ctx, returnValue);
-
                     });
-                Thread td = std::move(t);
-                td.detach();
-                jsmdPtr->threadList.push_back(td);
-                update(ctx);
-            }
-            else if (a_name == "RSA-PSS" || a_name == "RSA-OAEP" || a_name == "RSASSA-PKCS1-v1_5") {
+                };
 
-                JSV js_a_modulusLength = {};
-                uint64_t a_modulusLength = 0;
-                if (!ReadObjectProperty(ctx, uAlgorithm, "modulusLength", js_a_modulusLength) || !ReadJSValueAsUint64(ctx, js_a_modulusLength, a_modulusLength)) {
-                    if (!js_a_modulusLength.isValid())
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] RSA algorithm must have 'modulusLength' property"));
-                    if (js_a_modulusLength.isValid())
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] RSA modulus length must be an positive integer"));
-                    return promise.promise.get(1);
-                }
-                if (a_modulusLength % 8 != 0 || a_modulusLength < 1024 || a_modulusLength > 16384) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] RSA modulus length must be a multiple of 8 bits and between 1024 and 16384 bits"));
-                    return promise.promise.get(1);
-                }
-
-                JSV js_a_publicExponent = {};
-                BYTEBUFFER a_publicExponentBinary = {};
-                if (!ReadObjectProperty(ctx, uAlgorithm, "publicExponent", js_a_publicExponent) || !ReadJSValueAsUint8Array(ctx, js_a_publicExponent, a_publicExponentBinary)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] RSA public exponent must be a Uint8Array"));
-                    return promise.promise.get(1);
-                }
-                if (a_publicExponentBinary.empty()) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] RSA public exponent cannot be empty"));
-                    return promise.promise.get(1);
-                }
-
-                uint64_t a_publicExponent = 0;
-                for (unsigned char byte : a_publicExponentBinary) {
-                    if (a_publicExponent > (UINT64_MAX >> 8)) {
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] RSA public exponent is too large (exceeds 64 bits)"));
-                        return promise.promise.get(1);
-                    }
-                    a_publicExponent = (a_publicExponent << 8) | byte;
-                }
-                if (a_publicExponent <= 1 || (a_publicExponent % 2) == 0) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] RSA public exponent must be odd and >1"));
-                    return promise.promise.get(1);
-                }
-
-                JSV js_a_hash = {};
-                JSV js_hash_name = {};
-                std::string a_hash_name = "";
-                if (!ReadObjectProperty(ctx, uAlgorithm, "hash", js_a_hash) || !ReadObjectProperty(ctx, js_a_hash, "name", js_hash_name) || !ReadJSValueAsString(ctx, js_hash_name, a_hash_name)) {
-                    if (!js_a_hash.isValid())
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] RSA algorithm must have 'hash' property"));
-                    else if (!js_hash_name.isValid())
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] RSA hash must have 'name' property"));
-                    else if (a_hash_name == "")
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] RSA hash must have a valid 'name' property"));
-                    return promise.promise.get(1);
-                }
-                if (!allowedShaName.count(a_hash_name)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] The hash '" + a_hash_name + "' is not supported"));
-                    return promise.promise.get(1);
-                }
-
-                std::thread t([=]() {
-
-                    BYTEBUFFER publicKeyBinary = {};
-                    BYTEBUFFER privateKeyBinary = {};
-                    std::string paddingMode = "";
-                    if (a_name == "RSA-PSS") paddingMode = "PSS";
-                    else if (a_name == "RSA-OAEP") paddingMode = "OAEP";
-                    else if (a_name == "RSASSA-PKCS1-v1_5") paddingMode = "PKCS1";
-
-                    if (!crypto_subtle_generateKey_RSA(a_modulusLength, a_publicExponent, paddingMode, a_hash_name, &publicKeyBinary, &privateKeyBinary)) {
+            auto end_rsa = [=](const bool& genResult, const BYTEBUFFER& publicKeyBinary, const BYTEBUFFER& privateKeyBinary, const std::string& paddingMode, const std::string& a_hash_name) {
+                AddNativeTask(ctx, [=, genResult = std::move(genResult), publicKeyBinary = std::move(publicKeyBinary), privateKeyBinary = std::move(privateKeyBinary)] mutable {
+                    if (!genResult) {
                         promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.generateKey] Failed to generate key"));
                         return;
                     }
-
                     JSV returnValue = NewObject(ctx);
                     JSV publicKey = NewObject(ctx);
                     JSV privateKey = NewObject(ctx);
@@ -14968,55 +14633,15 @@ namespace cjs {
                     SetAttribute(ctx, privateKey, "internal", privateKeyPrivateObject, 0);
 
                     promise.Resolve(ctx, returnValue);
-
                     });
-                Thread td = std::move(t);
-                td.detach();
-                jsmdPtr->threadList.push_back(td);
-                update(ctx);
+                };
 
-            }
-            else if (a_name == "ECDSA" || a_name == "ECDH") {
-
-                JSV js_a_namedCurve = {};
-                std::string a_namedCurve = "";
-                if (!ReadObjectProperty(ctx, uAlgorithm, "namedCurve", js_a_namedCurve) || !ReadJSValueAsString(ctx, js_a_namedCurve, a_namedCurve)) {
-                    if (!js_a_namedCurve.isValid())
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] EC algorithm must have 'namedCurve' property"));
-                    if (js_a_namedCurve.isValid())
-                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] EC modulus name curve must be an valid string"));
-                    return promise.promise.get(1);
-                }
-                if (!allowedCurveName.count(a_namedCurve)) {
-                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] The namedCurve '" + a_namedCurve + "' is not supported"));
-                    return promise.promise.get(1);
-                }
-
-                std::string a_hash_name = "SHA-256";
-                if (a_name == "ECDSA") {
-                    JSV js_a_hash = {};
-                    if (ReadObjectProperty(ctx, uAlgorithm, "hash", js_a_hash)) {
-                        JSV js_hash_name = {};
-                        if (!ReadObjectProperty(ctx, js_a_hash, "name", js_hash_name) || !ReadJSValueAsString(ctx, js_hash_name, a_hash_name)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] ECDSA hash must have a valid 'name' string property"));
-                            return promise.promise.get(1);
-                        }
-                        if (!allowedShaName.count(a_hash_name)) {
-                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] The hash '" + a_hash_name + "' is not supported"));
-                            return promise.promise.get(1);
-                        }
-                    }
-                }
-
-                std::thread t([=]() {
-
-                    BYTEBUFFER publicKeyBinary = {};
-                    BYTEBUFFER privateKeyBinary = {};
-                    if (!crypto_subtle_generateKey_EC(a_name, a_namedCurve, a_hash_name, &publicKeyBinary, &privateKeyBinary)) {
+            auto end_ec = [=](const bool& genResult, const BYTEBUFFER& publicKeyBinary, const BYTEBUFFER& privateKeyBinary, const std::string& a_namedCurve, const std::string& a_hash_name) {
+                AddNativeTask(ctx, [=, genResult = std::move(genResult), publicKeyBinary = std::move(publicKeyBinary), privateKeyBinary = std::move(privateKeyBinary)] mutable {
+                    if (!genResult) {
                         promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.generateKey] Failed to generate key"));
                         return;
                     }
-
                     JSV returnValue = NewObject(ctx);
                     JSV publicKey = NewObject(ctx);
                     JSV privateKey = NewObject(ctx);
@@ -15070,25 +14695,15 @@ namespace cjs {
                     SetAttribute(ctx, privateKey, "internal", privateKeyPrivateObject, 0);
 
                     promise.Resolve(ctx, returnValue);
-
                     });
-                Thread td = std::move(t);
-                td.detach();
-                jsmdPtr->threadList.push_back(td);
-                update(ctx);
+                };
 
-            }
-            else if (a_name == "Ed25519") {
-
-                std::thread t([=]() {
-
-                    BYTEBUFFER publicKeyBinary = {};
-                    BYTEBUFFER privateKeyBinary = {};
-                    if (!crypto_subtle_generateKey_Ed25519(&publicKeyBinary, &privateKeyBinary)) {
+            auto end_ed25519 = [=](const bool& genResult, const BYTEBUFFER& publicKeyBinary, const BYTEBUFFER& privateKeyBinary) {
+                AddNativeTask(ctx, [=, genResult = std::move(genResult), publicKeyBinary = std::move(publicKeyBinary), privateKeyBinary = std::move(privateKeyBinary)] mutable {
+                    if (!genResult) {
                         promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.generateKey] Failed to generate key"));
                         return;
                     }
-
                     JSV returnValue = NewObject(ctx);
                     JSV publicKey = NewObject(ctx);
                     JSV privateKey = NewObject(ctx);
@@ -15137,25 +14752,15 @@ namespace cjs {
                     SetAttribute(ctx, privateKey, "internal", privateKeyPrivateObject, 0);
 
                     promise.Resolve(ctx, returnValue);
-
                     });
-                Thread td = std::move(t);
-                td.detach();
-                jsmdPtr->threadList.push_back(td);
-                update(ctx);
+                };
 
-            }
-            else if (a_name == "X25519") {
-
-                std::thread t([=]() {
-
-                    BYTEBUFFER publicKeyBinary = {};
-                    BYTEBUFFER privateKeyBinary = {};
-                    if (!crypto_subtle_generateKey_X25519(&publicKeyBinary, &privateKeyBinary)) {
+            auto end_x25519 = [=](const bool& genResult, const BYTEBUFFER& publicKeyBinary, const BYTEBUFFER& privateKeyBinary) {
+                AddNativeTask(ctx, [=, genResult = std::move(genResult), publicKeyBinary = std::move(publicKeyBinary), privateKeyBinary = std::move(privateKeyBinary)] mutable {
+                    if (!genResult) {
                         promise.Reject(ctx, NewInternalError(ctx, "[crypto.subtle.generateKey] Failed to generate key"));
                         return;
                     }
-
                     JSV returnValue = NewObject(ctx);
                     JSV publicKey = NewObject(ctx);
                     JSV privateKey = NewObject(ctx);
@@ -15190,13 +14795,229 @@ namespace cjs {
                     SetAttribute(ctx, privateKey, "internal", privateKeyPrivateObject, 0);
 
                     promise.Resolve(ctx, returnValue);
-
                     });
-                Thread td = std::move(t);
-                td.detach();
-                jsmdPtr->threadList.push_back(td);
-                update(ctx);
+                };
 
+            if (a_name == "HMAC") {
+
+                std::unordered_map<std::string, std::string>& allowedThisKeyUsagesList = allowedKeyUsagesList[a_name];
+                for (std::string usage : keyUsages) {
+                    if (!allowedThisKeyUsagesList.count(usage)) {
+                        promise.Reject(ctx, NewString(ctx, "[crypto.subtle.generateKey] The keyUsage '" + usage + "' is not supported in this algorithm"));
+                        return promise.promise.get(1);
+                    }
+                }
+
+                JSV js_a_hash = {};
+                if (!ReadObjectProperty(ctx, uAlgorithm, "hash", js_a_hash) || !JS_IsObject(js_a_hash.get())) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] HMAC algorithm must have a 'hash' object property"));
+                    return promise.promise.get(1);
+                }
+
+                JSV js_hash_name = {};
+                std::string hash_name = "";
+                if (!ReadObjectProperty(ctx, js_a_hash, "name", js_hash_name) || !ReadJSValueAsString(ctx, js_hash_name, hash_name)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] HMAC hash must have a 'name' string property"));
+                    return promise.promise.get(1);
+                }
+
+                if (hash_name != "SHA-1" && hash_name != "SHA-224" && hash_name != "SHA-256" && hash_name != "SHA-384" && hash_name != "SHA-512" && hash_name != "SHA-3-224" && hash_name != "SHA-3-256" && hash_name != "SHA-3-384" && hash_name != "SHA-3-512" && hash_name != "SHA-512/224" && hash_name != "SHA-512/256") {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] Unsupported HMAC hash algorithm : " + hash_name));
+                    return promise.promise.get(1);
+                }
+
+                JSV js_a_length = {};
+                uint64_t a_length = 0;
+                if (ReadObjectProperty(ctx, uAlgorithm, "length", js_a_length)) {
+                    uint64_t a_length_temp = 0;
+                    if (!ReadJSValueAsUint64(ctx, js_a_length, a_length_temp) || a_length_temp == 0) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] The key length must be an positive integer"));
+                        return promise.promise.get(1);
+                    }
+                    if (a_length_temp % 8 != 0 || a_length_temp < 8 || a_length_temp > 4096) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] HMAC key length must be a multiple of 8 bits and between 8 and 4096 bits"));
+                        return promise.promise.get(1);
+                    }
+                    a_length = a_length_temp / 8;
+                }
+
+                if (a_length == 0) {
+                    if (hash_name == "SHA-1") a_length = 20;
+                    else if (hash_name == "SHA-224") a_length = 28;
+                    else if (hash_name == "SHA-256") a_length = 32U;
+                    else if (hash_name == "SHA-384") a_length = 48;
+                    else if (hash_name == "SHA-512") a_length = 32U;
+                    else if (hash_name == "SHA-3-224") a_length = 28U;
+                    else if (hash_name == "SHA-3-256") a_length = 32U;
+                    else if (hash_name == "SHA-3-384") a_length = 48U;
+                    else if (hash_name == "SHA-3-512") a_length = 64U;
+                    else if (hash_name == "SHA-512/224") a_length = 28U;
+                    else if (hash_name == "SHA-512/256") a_length = 32U;
+                }
+
+                AddAsyncTask(ctx, [=]() mutable {
+                    BYTEBUFFER keyBinary = {};
+                    end_hmac(crypto_subtle_generateKey_HMAC(hash_name, a_length * 8, &keyBinary), keyBinary);
+                    });
+
+            }
+            else if (a_name == "AES-GCM" || a_name == "AES-CBC" || a_name == "AES-CTR" || a_name == "AES-KW") {
+
+                JSV js_a_length = {};
+                uint64_t a_length = 0;
+                if (!ReadObjectProperty(ctx, uAlgorithm, "length", js_a_length) || !ReadJSValueAsUint64(ctx, js_a_length, a_length)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] The key length must be an positive integer"));
+                    return promise.promise.get(1);
+                }
+
+                if (a_length % 8 != 0 || a_length < 128 || a_length > 512) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] AES key length must be a multiple of 8 bits and between 128 and 512 bits"));
+                    return promise.promise.get(1);
+                }
+
+                AddAsyncTask(ctx, [=]() mutable {
+                    BYTEBUFFER keyBinary = {};
+                    end_aes(crypto_subtle_generateKey_AES(a_length, a_name.substr(4), &keyBinary), keyBinary);
+                    });
+
+            }
+            else if (a_name == "ChaCha20-Poly1305") {
+
+                JSV js_a_length = {};
+                uint64_t a_length = 256;
+                if (ReadObjectProperty(ctx, uAlgorithm, "length", js_a_length)) {
+                    if (!ReadJSValueAsUint64(ctx, js_a_length, a_length) || a_length % 8 != 0 || a_length < 128 || a_length > 256) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] ChaCha20-Poly1305 key length must be a multiple of 8 bits and between 128 and 256 bits"));
+                        return promise.promise.get(1);
+                    }
+                }
+
+                AddAsyncTask(ctx, [=]() mutable {
+                    BYTEBUFFER keyBinary = {};
+                    end_chacha(crypto_subtle_generateKey_ChaCha20Poly1305(&keyBinary), keyBinary);
+                    });
+            }
+            else if (a_name == "RSA-PSS" || a_name == "RSA-OAEP" || a_name == "RSASSA-PKCS1-v1_5") {
+
+                JSV js_a_modulusLength = {};
+                uint64_t a_modulusLength = 0;
+                if (!ReadObjectProperty(ctx, uAlgorithm, "modulusLength", js_a_modulusLength) || !ReadJSValueAsUint64(ctx, js_a_modulusLength, a_modulusLength)) {
+                    if (!js_a_modulusLength.isValid())
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] RSA algorithm must have 'modulusLength' property"));
+                    if (js_a_modulusLength.isValid())
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] RSA modulus length must be an positive integer"));
+                    return promise.promise.get(1);
+                }
+                if (a_modulusLength % 8 != 0 || a_modulusLength < 1024 || a_modulusLength > 16384) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] RSA modulus length must be a multiple of 8 bits and between 1024 and 16384 bits"));
+                    return promise.promise.get(1);
+                }
+
+                JSV js_a_publicExponent = {};
+                BYTEBUFFER a_publicExponentBinary = {};
+                if (!ReadObjectProperty(ctx, uAlgorithm, "publicExponent", js_a_publicExponent) || !ReadJSValueAsUint8Array(ctx, js_a_publicExponent, a_publicExponentBinary)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] RSA public exponent must be a Uint8Array"));
+                    return promise.promise.get(1);
+                }
+                if (a_publicExponentBinary.empty()) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] RSA public exponent cannot be empty"));
+                    return promise.promise.get(1);
+                }
+
+                uint64_t a_publicExponent = 0;
+                for (unsigned char byte : a_publicExponentBinary) {
+                    if (a_publicExponent > (UINT64_MAX >> 8)) {
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] RSA public exponent is too large (exceeds 64 bits)"));
+                        return promise.promise.get(1);
+                    }
+                    a_publicExponent = (a_publicExponent << 8) | byte;
+                }
+                if (a_publicExponent <= 1 || (a_publicExponent % 2) == 0) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] RSA public exponent must be odd and >1"));
+                    return promise.promise.get(1);
+                }
+
+                JSV js_a_hash = {};
+                JSV js_hash_name = {};
+                std::string a_hash_name = "";
+                if (!ReadObjectProperty(ctx, uAlgorithm, "hash", js_a_hash) || !ReadObjectProperty(ctx, js_a_hash, "name", js_hash_name) || !ReadJSValueAsString(ctx, js_hash_name, a_hash_name)) {
+                    if (!js_a_hash.isValid())
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] RSA algorithm must have 'hash' property"));
+                    else if (!js_hash_name.isValid())
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] RSA hash must have 'name' property"));
+                    else if (a_hash_name == "")
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] RSA hash must have a valid 'name' property"));
+                    return promise.promise.get(1);
+                }
+                if (!allowedShaName.count(a_hash_name)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] The hash '" + a_hash_name + "' is not supported"));
+                    return promise.promise.get(1);
+                }
+
+                std::string paddingMode = "";
+                if (a_name == "RSA-PSS") paddingMode = "PSS";
+                else if (a_name == "RSA-OAEP") paddingMode = "OAEP";
+                else if (a_name == "RSASSA-PKCS1-v1_5") paddingMode = "PKCS1";
+
+                AddAsyncTask(ctx, [=, a_publicExponentBinary = std::move(a_publicExponentBinary)]() mutable {
+                    BYTEBUFFER publicKeyBinary = {};
+                    BYTEBUFFER privateKeyBinary = {};
+                    end_rsa(crypto_subtle_generateKey_RSA(a_modulusLength, a_publicExponent, paddingMode, a_hash_name, &publicKeyBinary, &privateKeyBinary), publicKeyBinary, privateKeyBinary, paddingMode, a_hash_name);
+                    });
+
+            }
+            else if (a_name == "ECDSA" || a_name == "ECDH") {
+
+                JSV js_a_namedCurve = {};
+                std::string a_namedCurve = "";
+                if (!ReadObjectProperty(ctx, uAlgorithm, "namedCurve", js_a_namedCurve) || !ReadJSValueAsString(ctx, js_a_namedCurve, a_namedCurve)) {
+                    if (!js_a_namedCurve.isValid())
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] EC algorithm must have 'namedCurve' property"));
+                    if (js_a_namedCurve.isValid())
+                        promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] EC modulus name curve must be an valid string"));
+                    return promise.promise.get(1);
+                }
+                if (!allowedCurveName.count(a_namedCurve)) {
+                    promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] The namedCurve '" + a_namedCurve + "' is not supported"));
+                    return promise.promise.get(1);
+                }
+
+                std::string a_hash_name = "SHA-256";
+                if (a_name == "ECDSA") {
+                    JSV js_a_hash = {};
+                    if (ReadObjectProperty(ctx, uAlgorithm, "hash", js_a_hash)) {
+                        JSV js_hash_name = {};
+                        if (!ReadObjectProperty(ctx, js_a_hash, "name", js_hash_name) || !ReadJSValueAsString(ctx, js_hash_name, a_hash_name)) {
+                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] ECDSA hash must have a valid 'name' string property"));
+                            return promise.promise.get(1);
+                        }
+                        if (!allowedShaName.count(a_hash_name)) {
+                            promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] The hash '" + a_hash_name + "' is not supported"));
+                            return promise.promise.get(1);
+                        }
+                    }
+                }
+
+                AddAsyncTask(ctx, [=]() mutable {
+                    BYTEBUFFER publicKeyBinary = {};
+                    BYTEBUFFER privateKeyBinary = {};
+                    end_ec(crypto_subtle_generateKey_EC(a_name, a_namedCurve, a_hash_name, &publicKeyBinary, &privateKeyBinary), publicKeyBinary, privateKeyBinary, a_namedCurve, a_hash_name);
+                    });
+
+            }
+            else if (a_name == "Ed25519") {
+                AddAsyncTask(ctx, [=]() mutable {
+                    BYTEBUFFER publicKeyBinary = {};
+                    BYTEBUFFER privateKeyBinary = {};
+                    end_ed25519(crypto_subtle_generateKey_Ed25519(&publicKeyBinary, &privateKeyBinary), publicKeyBinary, privateKeyBinary);
+                    });
+            }
+            else if (a_name == "X25519") {
+                AddAsyncTask(ctx, [=]() mutable {
+                    BYTEBUFFER publicKeyBinary = {};
+                    BYTEBUFFER privateKeyBinary = {};
+                    end_x25519(crypto_subtle_generateKey_X25519(&publicKeyBinary, &privateKeyBinary), publicKeyBinary, privateKeyBinary);
+                    });
             }
             else {
                 promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] The algorithm name '" + a_name + "' is not supported"));
@@ -16341,7 +16162,6 @@ namespace cjs {
 
             return fileControllerObject.get(1);
         }
-
 
 
         static bool ArrayInsert(JSContext* ctx, JSV array, uint64_t insert_idx, JSV value) {
@@ -18325,6 +18145,19 @@ namespace cjs {
 
             jsmdPtr->isRunningTask = false;
 
+        }
+        static bool AddAsyncTask(JSContext* ctx, std::function<void()> task, Thread* out = nullptr) {
+            JSMData* jsmdPtr = nullptr;
+            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) return false;
+            std::thread t([=]() {
+                task();
+                });
+            Thread td = std::move(t);
+            td.detach();
+            jsmdPtr->threadList.push_back(td);
+            update(ctx);
+            if (out) *out = td;
+            return true;
         }
 
         static ULL GetCJSValue(JSContext* ctx, JSV jsv) {
