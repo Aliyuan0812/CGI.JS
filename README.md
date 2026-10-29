@@ -57,6 +57,7 @@ cjs.exe script.cjs
 
 ### **更新日志**
 
+* 发布版本v3.6.20261029.01: 修复 ```system.execute``` 的多线程安全问题，新增 ```filesystem.input```、```filesystem.scan```、```filesystem.info```，修复 ```filesystem.list``` 列出占有锁文件的问题。
 * 发布版本v3.5.20261026.01: 修复 ```window.crypto``` 和 ```window.bytebuffer``` 的多线程安全问题，以及修复一系列多线程安全问题。 
 * 发布版本v3.4.20261025.01: 修复 ```network.http.open``` 和 ```window.setTimeout``` 的多线程安全问题。 
 * 发布版本v3.3.20261024.01: 修复 ```window.include``` 在非模块化环境下不可用的问题，优化 ```network.http.open``` 使其更加可靠规范，优化十余并发安全问题。

@@ -17,6 +17,9 @@
 #include <winhttp.h>
 #include <wininet.h>
 #include <gdiplus.h>
+#include <shobjidl.h>
+#include <wrl.h>
+#include <objbase.h>
 
 #include <string>
 #include <vector>
@@ -130,6 +133,7 @@ extern "C" {
 #pragma warning(disable: 26495)
 #pragma warning(disable: 6262)
 #pragma warning(disable: 6386)
+#pragma warning(disable: 26478)
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "winhttp.lib")
@@ -4281,13 +4285,22 @@ namespace cjs {
         return result;
     }
 
+    struct Filedata {
+        std::wstring type;
+        std::wstring absolutePath;
+        std::wstring relativePath;
+        std::wstring name;
+        std::wstring suffix;
+        int64_t size;
+        std::wstring createDate;
+    };
+
     class FileController {
     public:
         FileController(std::wstring InPath, std::wstring base) {
             try {
                 path = GetAbsolutePath(InPath, base);
                 isValid = exists();
-
                 if (isValid) {
                     hLockedHandle = LockPath(path);
                     isValid = (hLockedHandle != INVALID_HANDLE_VALUE);
@@ -4303,8 +4316,7 @@ namespace cjs {
             try {
                 ReleaseLock();
             }
-            catch (...) {
-            }
+            catch (...) {}
         }
 
         FileController(const FileController&) = delete;
@@ -4374,11 +4386,13 @@ namespace cjs {
                     return 0;
                 }
                 if (std::filesystem::is_directory(path)) {
-                    for (const auto& entry : std::filesystem::recursive_directory_iterator(path)) {
+                    for (const auto& entry : std::filesystem::recursive_directory_iterator(path, std::filesystem::directory_options::skip_permission_denied)) {
+                        auto fn = entry.path().filename().wstring();
+                        if (fn.starts_with(L".cjs.fc.lock")) continue;
                         count++;
                     }
                 }
-                return count;
+                return static_cast<ULL>(count);
             }
             catch (...) {
                 return 0;
@@ -4409,22 +4423,19 @@ namespace cjs {
                 if (!exists()) {
                     return 0;
                 }
-
                 ULL total_size = 0;
-
                 if (std::filesystem::is_regular_file(path)) {
                     total_size = static_cast<ULL>(std::filesystem::file_size(path));
                 }
                 else if (std::filesystem::is_directory(path)) {
-                    for (const auto& entry : std::filesystem::recursive_directory_iterator(
-                        path,
-                        std::filesystem::directory_options::skip_permission_denied)) {
+                    for (const auto& entry : std::filesystem::recursive_directory_iterator(path, std::filesystem::directory_options::skip_permission_denied)) {
+                        auto fn = entry.path().filename().wstring();
+                        if (fn.starts_with(L".cjs.fc.lock")) continue;
                         if (std::filesystem::is_regular_file(entry)) {
                             total_size += static_cast<ULL>(std::filesystem::file_size(entry));
                         }
                     }
                 }
-
                 return total_size;
             }
             catch (...) {
@@ -4437,24 +4448,18 @@ namespace cjs {
                 if (std::filesystem::is_regular_file(path)) {
                     return {};
                 }
-
                 GMMT result_map;
                 std::filesystem::path root_path(path);
                 if (!std::filesystem::exists(root_path)) return result_map;
-
-                std::filesystem::recursive_directory_iterator iter(
-                    root_path,
-                    std::filesystem::directory_options::skip_permission_denied
-                );
+                std::filesystem::recursive_directory_iterator iter(root_path, std::filesystem::directory_options::skip_permission_denied);
                 std::filesystem::recursive_directory_iterator end_iter;
-
                 for (; iter != end_iter; ++iter) {
                     try {
-                        const std::filesystem::directory_entry& entry = *iter;
-                        const std::filesystem::path& entry_path = entry.path();
-                        std::wstring item_name = entry_path.filename().wstring();
-                        std::wstring full_path = entry_path.wstring();
-
+                        const auto& entry = *iter;
+                        std::wstring fn = entry.path().filename().wstring();
+                        if (fn.starts_with(L".cjs.fc.lock")) continue;
+                        std::wstring item_name = fn;
+                        std::wstring full_path = entry.path().wstring();
                         std::replace(full_path.begin(), full_path.end(), L'\\', L'/');
                         if (entry.is_directory() && !full_path.empty() && full_path.back() != L'/') {
                             full_path += L'/';
@@ -4472,44 +4477,104 @@ namespace cjs {
             }
         }
 
+        GMMT scan() {
+            try {
+                if (std::filesystem::is_regular_file(path)) {
+                    return {};
+                }
+                GMMT result_map;
+                std::filesystem::path root_path(path);
+                if (!std::filesystem::exists(root_path)) return result_map;
+                std::filesystem::directory_iterator iter(root_path, std::filesystem::directory_options::skip_permission_denied);
+                std::filesystem::directory_iterator end_iter;
+                for (; iter != end_iter; ++iter) {
+                    try {
+                        const auto& entry = *iter;
+                        std::wstring fn = entry.path().filename().wstring();
+                        if (fn.starts_with(L".cjs.fc.lock")) continue;
+                        std::wstring item_name = fn;
+                        std::wstring full_path = entry.path().wstring();
+                        std::replace(full_path.begin(), full_path.end(), L'\\', L'/');
+                        if (entry.is_directory() && !full_path.empty() && full_path.back() != L'/') {
+                            full_path += L'/';
+                        }
+                        result_map.emplace(item_name, full_path);
+                    }
+                    catch (...) {
+                        continue;
+                    }
+                }
+                return result_map;
+            }
+            catch (...) {
+                return {};
+            }
+        }
+
+        Filedata info() {
+            Filedata fd{};
+            try {
+                std::filesystem::path p(path);
+                if (!std::filesystem::exists(p)) return fd;
+                std::wstring abs = p.wstring();
+                std::replace(abs.begin(), abs.end(), L'\\', L'/');
+                bool isdir = std::filesystem::is_directory(p);
+                fd.type = isdir ? L"folder" : L"file";
+                fd.absolutePath = abs;
+                fd.relativePath = L"./" + p.filename().wstring() + (isdir ? L"/" : L"");
+                fd.name = p.filename().wstring();
+                if (isdir) {
+                    fd.suffix = L"";
+                    fd.size = -1;
+                }
+                else {
+                    fd.suffix = p.extension().wstring();
+                    fd.size = static_cast<int64_t>(std::filesystem::file_size(p));
+                }
+                auto ft = std::filesystem::last_write_time(p);
+                auto sys_tp = std::chrono::clock_cast<std::chrono::system_clock>(ft);
+                std::time_t t = std::chrono::system_clock::to_time_t(sys_tp);
+                std::tm utc_tm{};
+                gmtime_s(&utc_tm, &t);
+                wchar_t buf[32];
+                wcsftime(buf, 32, L"%Y-%m-%dT%H:%M:%SZ", &utc_tm);
+                fd.createDate = buf;
+            }
+            catch (...) {
+                fd.size = -1;
+            }
+            return fd;
+        }
+
         bool read(ULL base, ULL size, BYTEBUFFER_PTR out) {
             try {
                 if (std::filesystem::is_directory(path)) {
                     return false;
                 }
-
                 if (out == nullptr || !exists()) {
                     return false;
                 }
-
                 std::ifstream file(path, std::ios::in | std::ios::binary);
                 if (!file.is_open()) {
                     return false;
                 }
-
                 file.seekg(0, std::ios::end);
                 const ULL file_total_size = static_cast<ULL>(file.tellg());
                 file.seekg(0, std::ios::beg);
-
                 const ULL read_start = (base >= file_total_size) ? file_total_size : base;
                 ULL actual_read_size = 0;
-
                 if (size == ULLONG_MAX) {
                     actual_read_size = file_total_size - read_start;
                 }
                 else {
-                    actual_read_size = (read_start + size > file_total_size)
-                        ? (file_total_size - read_start)
-                        : size;
+                    actual_read_size = (read_start + size > file_total_size) ? (file_total_size - read_start) : size;
                 }
-
                 out->clear();
                 if (actual_read_size > 0) {
                     out->resize(static_cast<size_t>(actual_read_size));
                     file.seekg(static_cast<std::streamoff>(read_start));
                     file.read(reinterpret_cast<char*>(out->data()), actual_read_size);
                 }
-
                 return !file.fail();
             }
             catch (...) {
@@ -4522,30 +4587,24 @@ namespace cjs {
                 if (std::filesystem::is_directory(path)) {
                     return 0;
                 }
-
                 if (!buffer || buffer->empty()) {
                     return 0;
                 }
-
                 const ULL write_data_size = buffer->size();
                 std::fstream file;
                 ULL write_start = base;
-
                 file.open(path, std::ios::in | std::ios::out | std::ios::binary);
-
                 if (!file.is_open()) {
                     std::ofstream create_file(path, std::ios::out | std::ios::binary);
                     if (!create_file.is_open()) {
                         return 0;
                     }
                     create_file.close();
-
                     file.open(path, std::ios::in | std::ios::out | std::ios::binary);
                     if (!file.is_open()) {
                         return 0;
                     }
                 }
-
                 file.seekg(0, std::ios::end);
                 if (file.fail()) {
                     file.close();
@@ -4556,29 +4615,24 @@ namespace cjs {
                     file.close();
                     return 0;
                 }
-
                 if (append) {
                     write_start = (base == 0 || base >= file_total_size) ? file_total_size : base;
                 }
                 else {
                     write_start = base;
                 }
-
                 file.seekp(static_cast<std::streamoff>(write_start));
                 if (file.fail()) {
                     file.close();
                     return 0;
                 }
-
                 file.write(reinterpret_cast<const char*>(buffer->data()), write_data_size);
                 if (file.fail() || file.bad()) {
                     file.close();
                     return 0;
                 }
-
                 file.flush();
                 file.close();
-
                 return write_data_size;
             }
             catch (...) {
@@ -4590,19 +4644,145 @@ namespace cjs {
             try {
                 std::fstream file;
                 file.open(path, std::ios::out | std::ios::binary | std::ios::trunc);
-
                 if (!file.is_open()) {
                     return false;
                 }
-
                 file.close();
-
                 return !file.fail();
             }
             catch (...) {
                 return false;
             }
         }
+
+        static GMMT choose(std::wstring path = L"", std::wstring title = L"选择文件...", bool isMultiple = false, bool isFolder = false, HWND hwnd = NULL, GMMT supportFileType = { { L"所有文件", L"*.*" } }) {
+            GMMT result;
+
+            try {
+                HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+                if (FAILED(hr)) return result;
+
+                Microsoft::WRL::ComPtr<IFileDialog> pDialog;
+
+                if (isFolder) {
+                    hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&pDialog));
+                    if (SUCCEEDED(hr)) {
+                        DWORD options;
+                        hr = pDialog->GetOptions(&options);
+                        if (SUCCEEDED(hr)) {
+                            pDialog->SetOptions(options | FOS_PICKFOLDERS);
+                        }
+                    }
+                }
+                else {
+                    hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&pDialog));
+                }
+
+                if (FAILED(hr)) {
+                    CoUninitialize();
+                    return result;
+                }
+
+                if (!title.empty()) {
+                    pDialog->SetTitle(title.c_str());
+                }
+
+                if (!isFolder && !supportFileType.empty()) {
+                    std::vector<COMDLG_FILTERSPEC> filterSpecs;
+                    for (const auto& pair : supportFileType) {
+                        filterSpecs.push_back({ pair.first.c_str(), pair.second.c_str() });
+                    }
+                    pDialog->SetFileTypes(static_cast<UINT>(filterSpecs.size()), filterSpecs.data());
+                }
+
+                if (!path.empty()) {
+                    Microsoft::WRL::ComPtr<IShellItem> pFolder;
+                    hr = SHCreateItemFromParsingName(path.c_str(), nullptr, IID_PPV_ARGS(&pFolder));
+                    if (SUCCEEDED(hr)) {
+                        pDialog->SetFolder(pFolder.Get());
+                    }
+                }
+                else {
+                    Microsoft::WRL::ComPtr<IShellItem> pComputer;
+                    hr = SHCreateItemInKnownFolder(FOLDERID_ComputerFolder, NULL, nullptr, IID_PPV_ARGS(&pComputer));
+                    if (SUCCEEDED(hr)) {
+                        pDialog->SetFolder(pComputer.Get());
+                    }
+                }
+
+                if (isMultiple) {
+                    DWORD options;
+                    hr = pDialog->GetOptions(&options);
+                    if (SUCCEEDED(hr)) {
+                        pDialog->SetOptions(options | FOS_ALLOWMULTISELECT);
+                    }
+                }
+
+                hr = pDialog->Show(hwnd);
+                if (SUCCEEDED(hr)) {
+                    if (isMultiple) {
+                        Microsoft::WRL::ComPtr<IFileOpenDialog> pOpenDialog;
+                        hr = pDialog.As(&pOpenDialog);
+                        if (SUCCEEDED(hr)) {
+                            Microsoft::WRL::ComPtr<IShellItemArray> pItems;
+                            hr = pOpenDialog->GetResults(&pItems);
+                            if (SUCCEEDED(hr)) {
+                                DWORD count;
+                                hr = pItems->GetCount(&count);
+                                if (SUCCEEDED(hr)) {
+                                    for (DWORD i = 0; i < count; ++i) {
+                                        Microsoft::WRL::ComPtr<IShellItem> pItem;
+                                        hr = pItems->GetItemAt(i, &pItem);
+                                        if (SUCCEEDED(hr)) {
+                                            PWSTR pszPath = nullptr;
+                                            hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszPath);
+                                            if (SUCCEEDED(hr)) {
+                                                std::wstring fullPath(pszPath);
+                                                CoTaskMemFree(pszPath);
+
+                                                size_t lastSlash = fullPath.find_last_of(L"\\/");
+                                                std::wstring fileName = (lastSlash != std::wstring::npos)
+                                                    ? fullPath.substr(lastSlash + 1)
+                                                    : fullPath;
+
+                                                result[fileName] = fullPath;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    else {
+                        Microsoft::WRL::ComPtr<IShellItem> pItem;
+                        hr = pDialog->GetResult(&pItem);
+                        if (SUCCEEDED(hr)) {
+                            PWSTR pszPath = nullptr;
+                            hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszPath);
+                            if (SUCCEEDED(hr)) {
+                                std::wstring fullPath(pszPath);
+                                CoTaskMemFree(pszPath);
+
+                                size_t lastSlash = fullPath.find_last_of(L"\\/");
+                                std::wstring fileName = (lastSlash != std::wstring::npos)
+                                    ? fullPath.substr(lastSlash + 1)
+                                    : fullPath;
+
+                                result[fileName] = fullPath;
+                            }
+                        }
+                    }
+                }
+
+                CoUninitialize();
+            }
+            catch (...) {
+                return {};
+            }
+
+            return result;
+        }
+
 
     private:
         HANDLE hLockedHandle = INVALID_HANDLE_VALUE;
@@ -4624,27 +4804,11 @@ namespace cjs {
         HANDLE LockPath(const std::wstring& path) {
             try {
                 if (isFile()) {
-                    return CreateFileW(
-                        path.c_str(),
-                        GENERIC_READ,
-                        FILE_SHARE_READ | FILE_SHARE_WRITE,
-                        NULL,
-                        OPEN_EXISTING,
-                        FILE_ATTRIBUTE_NORMAL,
-                        NULL
-                    );
+                    return CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
                 }
                 else if (isDir()) {
                     lockTempFilePath = path + L"\\.cjs.fc.lock" + std::to_wstring(GetCurrentProcessId()) + std::to_wstring(GetCurrentThreadId()) + L".tmp";
-                    return CreateFileW(
-                        lockTempFilePath.c_str(),
-                        GENERIC_READ | GENERIC_WRITE,
-                        FILE_SHARE_READ | FILE_SHARE_WRITE,
-                        NULL,
-                        CREATE_ALWAYS,
-                        FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM,
-                        NULL
-                    );
+                    return CreateFileW(lockTempFilePath.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM, NULL);
                 }
                 return INVALID_HANDLE_VALUE;
             }
@@ -4664,8 +4828,7 @@ namespace cjs {
                     lockTempFilePath.clear();
                 }
             }
-            catch (...) {
-            }
+            catch (...) {}
         }
     };
 
@@ -9181,6 +9344,9 @@ namespace cjs {
                     AppendMethod(ctx, filesystem, "remove", filesystem_remove);
                     AppendMethod(ctx, filesystem, "count", filesystem_count);
                     AppendMethod(ctx, filesystem, "list", filesystem_list);
+                    AppendMethod(ctx, filesystem, "scan", filesystem_scan);
+                    AppendMethod(ctx, filesystem, "info", filesystem_info);
+                    AppendMethod(ctx, filesystem, "input", filesystem_input);
                     successCount++;
                 }
 
@@ -11811,29 +11977,21 @@ namespace cjs {
                 JS_ThrowTypeError(ctx, "[system.execute] The first argument must be a string");
                 return JS_EXCEPTION;
             }
-            JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
-                return JS_EXCEPTION;
-            }
-            std::thread t([=]() {
+            AddAsyncTask(ctx, [=]() {
                 std::wstring result = L"";
                 DWORD returnCode = EXIT_SUCCESS;
                 bool ret = ExecuteCmdCommand(stringToWstring(cmd), result, &returnCode);
-                JSV returnValue = NewObject(ctx);
-                JSV vIsSuccess = NewBool(ctx, ret);
-                SetAttribute(ctx, returnValue, "isSuccess", vIsSuccess);
-                JSV vExitCode = NewNumber(ctx, static_cast<double>(returnCode));
-                SetAttribute(ctx, returnValue, "exitCode", vExitCode);
-                JSV vOutput = NewString(ctx, wstringToString(result));
-                SetAttribute(ctx, returnValue, "output", vOutput);
-                promise.Resolve(ctx, returnValue);
+                AddNativeTask(ctx, [=]() {
+                    JSV returnValue = NewObject(ctx);
+                    JSV vIsSuccess = NewBool(ctx, ret);
+                    SetAttribute(ctx, returnValue, "isSuccess", vIsSuccess);
+                    JSV vExitCode = NewNumber(ctx, static_cast<double>(returnCode));
+                    SetAttribute(ctx, returnValue, "exitCode", vExitCode);
+                    JSV vOutput = NewString(ctx, wstringToString(result));
+                    SetAttribute(ctx, returnValue, "output", vOutput);
+                    promise.Resolve(ctx, returnValue);
+                    });
                 });
-            Thread td = std::move(t);
-            td.detach();
-            jsmdPtr->threadList.push_back(td);
-            update(ctx);
-
             return promise.promise.get(1);
         }
         static JSValue system_cmd(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -15640,6 +15798,111 @@ namespace cjs {
             return NewString(ctx, wstringToString(inputData)).get(1);
         }
 
+        static JSValue filesystem_input(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount > 1) {
+                JS_ThrowTypeError(ctx, "[filesystem.input] Only 0 or 1 argument is supported: (config?)");
+                return JS_EXCEPTION;
+            }
+            std::wstring defaultPath = L"";
+            std::wstring title = L"";
+            bool multiple = false;
+            bool folder = false;
+            GMMT accept = { { L"所有文件", L"*.*" } };
+            if (argumentCount == 1) {
+                JSV vConfig = JSV(ctx, &argumentValues[0]);
+                OBJECT config = {};
+                if (!JS_IsObject(vConfig.get(0)) || !ReadJSValueAsObject(ctx, vConfig, config)) {
+                    JS_ThrowTypeError(ctx, "[filesystem.input] The first argument must be a object");
+                    return JS_EXCEPTION;
+                }
+                auto it_defaultPath = config.find(L"defaultPath");
+                if (it_defaultPath != config.end() && it_defaultPath->second.isString()) {
+                    defaultPath = it_defaultPath->second.get<std::wstring>();
+                }
+
+                auto it_title = config.find(L"title");
+                if (it_title != config.end() && it_title->second.isString()) {
+                    title = it_title->second.get<std::wstring>();
+                }
+
+                auto it_multiple = config.find(L"multiple");
+                if (it_multiple != config.end() && it_multiple->second.isBool()) {
+                    multiple = it_multiple->second.get<bool>();
+                }
+
+                auto it_folder = config.find(L"folder");
+                if (it_folder != config.end() && it_folder->second.isBool()) {
+                    folder = it_folder->second.get<bool>();
+                }
+
+                auto it_accept = config.find(L"accept");
+                if (it_accept != config.end() && it_accept->second.isObject()) {
+                    accept = {};
+                    for (const auto& [key, value] : it_accept->second.get<OBJECT>()) {
+                        if (!value.isString()) continue;
+                        accept[key] = value.get<std::wstring>();
+                    }
+                }
+            }
+            GMMT files = FileController::choose(defaultPath, title, multiple, folder, NULL, accept);
+            std::vector<JSV> result = {};
+            for (const auto& [_, path] : files) {
+                result.push_back(NewString(ctx, wstringToString(path)));
+            }
+            JSV ret = NewArray(ctx, result);
+            return ret.get(1);
+        }
+        static JSValue filesystem_info(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 1) {
+                JS_ThrowTypeError(ctx, "[filesystem.info] Only 1 argument is supported: (path)");
+                return JS_EXCEPTION;
+            }
+            JSV vPath = JSV(&argumentValues[0]);
+            std::string path = "";
+            if (!JS_IsString(vPath.get(0)) || !ReadJSValueAsString(ctx, vPath, path)) {
+                JS_ThrowTypeError(ctx, "[filesystem.info] The first argument must be a string");
+                return JS_EXCEPTION;
+            }
+            FileController fc = FileController(stringToWstring(path), stringToWstring(GetCurrentWorkDirectory(ctx)));
+            if (!fc.exists()) {
+                JS_ThrowTypeError(ctx, "[filesystem.info] The path does not exist");
+                return JS_EXCEPTION;
+            }
+            Filedata info = fc.info();
+            JSV ret = NewObject(ctx);
+            SetSymbolName(ctx, ret, "FileData");
+            SetAttribute(ctx, ret, "type", wstringToString(info.type));
+            SetAttribute(ctx, ret, "absolutePath", wstringToString(info.absolutePath));
+            SetAttribute(ctx, ret, "relativePath", wstringToString(info.relativePath));
+            SetAttribute(ctx, ret, "name", wstringToString(info.name));
+            SetAttribute(ctx, ret, "suffix", wstringToString(info.suffix));
+            SetAttribute(ctx, ret, "size", NewNumber(ctx, (double)info.size));
+            SetAttribute(ctx, ret, "createDate", wstringToString(info.createDate));
+            return ret.get(1);
+        }
+        static JSValue filesystem_scan(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 1) {
+                JS_ThrowTypeError(ctx, "[filesystem.scan] Only 1 argument is supported: (path)");
+                return JS_EXCEPTION;
+            }
+            JSV vPath = JSV(&argumentValues[0]);
+            std::string path = "";
+            if (!JS_IsString(vPath.get(0)) || !ReadJSValueAsString(ctx, vPath, path)) {
+                JS_ThrowTypeError(ctx, "[filesystem.scan] The first argument must be a string");
+                return JS_EXCEPTION;
+            }
+            FileController fc = FileController(stringToWstring(path), stringToWstring(GetCurrentWorkDirectory(ctx)));
+            if (!fc.isDir()) {
+                JS_ThrowTypeError(ctx, "[filesystem.scan] The path must be a directory");
+                return JS_EXCEPTION;
+            }
+            OBJECT fileList = {};
+            GMMT list = fc.scan();
+            for (const auto& [name, path] : list) {
+                fileList[path] = name;
+            }
+            return NewObject(ctx, fileList).get(1);
+        }
         static JSValue filesystem_list(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount != 1) {
                 JS_ThrowTypeError(ctx, "[filesystem.list] Only 1 argument is supported: (path)");

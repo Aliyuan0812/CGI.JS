@@ -1,9 +1,9 @@
 # CGI.JS-Windows API 参考文档
 > 本文档仅对解释器宿主扩展 API 进行详细说明；其余原生语言接口均遵循 ECMAScript 规范。
 >
-> 解释器版本: v3.2.20261017.01。接口行为会受运行环境影响，实际表现请以本地测试结果为准。
+> 解释器版本: v3.6.20261029.01。接口行为会受运行环境影响，实际表现请以本地测试结果为准。
 >
-> 文档最后更新: 2026 年 10 月 17 日。
+> 文档最后更新: 2026 年 10 月 29 日。
 
 ## 说明
 
@@ -1099,7 +1099,7 @@
 # filesystem 对象
 
   ## list 函数
-  列出指定目录中的条目。
+  带递归的列出指定目录中的所有条目。
 
   ### 语法
   ```js
@@ -1124,10 +1124,10 @@
 
   &bull; `path` 不是字符串。
 
-  &bull; 指定路径不是目录。
+  &bull; 指定路径不是目录或不存在。
 
   ### 备注
-  **list** 函数会读取指定目录下的条目，并构造一个普通对象返回。返回对象的属性名为条目路径，属性值为条目名称。目录为空时返回空对象。
+  **list** 函数会读取指定目录下的所有条目，并构造一个普通对象返回。返回对象的属性名为条目的绝对路径，属性值为条目名称。目录为空时返回空对象。
 
   ### 例
   以下示例代码演示如何使用 **list**。
@@ -1148,6 +1148,252 @@
   | 所属模块 | filesystem |
   | 可用性 | 全局可用 |
   | 位置 | filesystem.list |
+
+  ---
+
+  ## scan 函数
+  不带递归的列出指定目录中的所有条目。
+
+  ### 语法
+  ```js
+  filesystem.scan(path: String) : Object
+  ```
+
+  ### 参数
+  `path`
+
+  类型: **String**
+
+  需要列出的目录路径。相对路径基于当前上下文的工作目录解析。
+
+  ### 返回值
+  类型: **Object**
+
+  如果函数成功，则返回一个对象，其键为目录内条目的路径，值为条目名称。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  &bull; 传入参数的数量不为 **1**。
+
+  &bull; `path` 不是字符串。
+
+  &bull; 指定路径不是目录或不存在。
+
+  ### 备注
+  **scan** 函数会读取指定目录下的直接条目，并构造一个普通对象返回。返回对象的属性名为条目的绝对路径，属性值为条目名称。目录为空时返回空对象。
+
+  ### 例
+  以下示例代码演示如何使用 **scan**。
+  ```js
+  include('cjs:filesystem');
+
+  const entries = filesystem.scan('./');
+  for (const path in entries) {
+      console.log(path, entries[path]);
+  }
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v3.6.20261029.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | filesystem |
+  | 可用性 | 全局可用 |
+  | 位置 | filesystem.scan |
+
+  ---
+
+  ## info 函数
+  获取指定文件/文件夹的详细信息。
+
+  ### 语法
+  ```js
+  filesystem.info(path: String) : Object
+  ```
+
+  ### 参数
+  `path`
+
+  类型: **String**
+
+  需要获取详细信息的文件/文件夹路径。相对路径基于当前上下文的工作目录解析。
+
+  ### 返回值
+  类型: **Object**
+
+  如果函数成功，则返回一个 FileData 对象。返回值的结构如下：
+  ```js
+  {
+      type: String,
+      absolutePath: String,
+      relativePath: String,
+      name: String,
+      suffix: String,
+      size: Number,
+      createDate: String,
+      
+  }
+  ```
+  `type`
+
+  类型: **String**
+
+  指定路径的文件的类型，如果类型为文件固定为 **"file"**，如果类型为文件夹则固定为 **"folder"**。
+
+  `absolutePath`
+
+  类型: **String**
+
+  指定路径的绝对路径。
+
+  `relativePath`
+
+  类型: **String**
+
+  指定路径的相对路径。
+
+  `name`
+
+  类型: **String**
+
+  指定路径的文件/文件夹名称。
+
+  `suffix`
+
+  类型: **String**
+
+  指定路径的文件后缀，如果类型为文件夹则固定为 **""**。
+
+  `size`
+
+  类型: **Number**
+
+  指定路径的文件/文件夹的大小。
+
+  `createDate`
+
+  类型: **String**
+
+  指定路径的文件/文件夹的创建日期，形如 **YYYY-MM-DDThh:mm:ssZ**。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  &bull; 传入参数的数量不为 **1**。
+
+  &bull; `path` 不是字符串。
+
+  &bull; 指定路径不存在。
+
+  ### 备注
+  **info** 函数会读取指定目录下的条目，并构造一个普通对象返回。返回对象的属性名为条目路径，属性值为条目名称。目录为空时返回空对象。
+
+  ### 例
+  以下示例代码演示如何使用 **info**。
+  ```js
+  include('cjs:filesystem');
+
+  const info = filesystem.info('./');
+  console.log(info);
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v3.6.20261029.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | filesystem |
+  | 可用性 | 全局可用 |
+  | 位置 | filesystem.info |
+
+  ---
+
+  ## input 函数
+  要求用户选择文件/文件夹。
+
+  ### 语法
+  ```js
+  filesystem.input([config: Object]) : Array
+  ```
+
+  ### 参数
+  `[config]`
+
+  类型: **Object**
+
+  配置对象，其支持的结构如下所示: 
+  ```js
+  {
+      defaultPath: String,
+      title: String,
+      multiple: Boolean,
+      folder: Boolean,
+      accept: Object,
+  }
+  ```
+  `defaultPath`
+
+  类型: **String**
+
+  指定文件选择窗口默认打开的路径。
+
+  `title`
+
+  类型: **String**
+
+  指定文件选择窗口的标题。
+
+  `multiple`
+
+  类型: **Boolean**
+
+  是否允许选择多个文件。
+
+  `folder`
+
+  类型: **Boolean**
+
+  是否指定选择文件的类型为文件夹而不是文件。
+
+  `accept`
+
+  类型: **Object**
+
+  接受的文件类型，其中键为类型注明，值为特定标识符，例如 `*.*`、`*.png` 或者是 `mypic.jpg`。
+
+
+  ### 返回值
+  类型: **Array**
+
+  如果函数成功，则返回一个数组，其中每一项为选中文件的绝对路径。
+  
+
+  此函数通常因以下原因之一而抛出异常:
+
+  &bull; 传入参数的数量不为 **0** 或 **1**。
+
+  &bull; `config` 不是对象。
+
+  ### 备注
+  **input** 函数会弹出操作系统自带的文件选择框并且阻塞等待直到该窗口被关闭。
+
+  ### 例
+  以下示例代码演示如何使用 **input**。
+  ```js
+  include('cjs:filesystem');
+
+  const files = filesystem.input('./');
+  console.log(files);
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v3.6.20261029.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | filesystem |
+  | 可用性 | 全局可用 |
+  | 位置 | filesystem.input |
 
   ---
 
@@ -1177,7 +1423,7 @@
 
   &bull; `path` 不是字符串。
 
-  &bull; 指定路径不是目录。
+  &bull; 指定路径不是目录或不存在。
 
   ### 备注
   **count** 函数仅统计目录中的条目数量，不会递归统计子目录内部的内容。

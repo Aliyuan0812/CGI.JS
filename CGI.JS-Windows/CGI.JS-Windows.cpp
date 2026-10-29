@@ -2,7 +2,7 @@
 
 #ifndef AY_CJS_CPP
 #define AY_CJS_CPP
-#define AY_CJS_CPP_VW std::wstring(L"3.5.20261026.01")
+#define AY_CJS_CPP_VW std::wstring(L"3.6.20261029.01")
 #define AY_CJS_CPP_VL []() -> std::wstring { \
     std::wstring s(AY_CJS_CPP_VW); \
     s.erase(std::remove(s.begin(), s.end(), L'.'), s.end()); \
@@ -318,12 +318,12 @@ int FastCgiMain(const OpaqueData& data, std::wstring startFilePath = L"") {
 
                 JSV global = jsm->NewGlobalObject(ctx);
                 JSV network_request = jsm->GetProperty(ctx, global, {
-                    {"network"},
-                    {"request"},
+                    { "network" },
+                    { "request" },
                     });
                 JSV network_response = jsm->GetProperty(ctx, global, {
-                    {"network"},
-                    {"response"},
+                    { "network" },
+                    { "response" },
                     });
                 jsm->SetAttribute(ctx, jsm->GetProperty(ctx, global, "system"), "workDirectory", wstringToString(GetFilePathWithoutName(scriptPath)));
                 jsm->SetAttribute(ctx, network_request, "method", network_request_method_string);
@@ -359,15 +359,16 @@ int FastCgiMain(const OpaqueData& data, std::wstring startFilePath = L"") {
 
 
                 BYTEBUFFER requestBodyBinary = {};
-                if ((isModernMode && (network_request_method_string == "GET" || network_request_method_string == "HEAD" || network_request_method_string == "DELETE" || network_request_method_string == "OPTIONS" || network_request_method_string == "TRACE" || network_request_method_string == "CONNECT"))) {} else ReadRequestBody(&request, &requestBodyBinary);
+                if ((isModernMode && (network_request_method_string == "GET" || network_request_method_string == "HEAD" || network_request_method_string == "DELETE" || network_request_method_string == "OPTIONS" || network_request_method_string == "TRACE" || network_request_method_string == "CONNECT"))) {}
+                else ReadRequestBody(&request, &requestBodyBinary);
 
                 JSV requestBody = JSV(JS_NULL);
-                if (requestBodyBinary.size()>0) requestBody = jsm->NewUint8Array(ctx, requestBodyBinary);
+                if (requestBodyBinary.size() > 0) requestBody = jsm->NewUint8Array(ctx, requestBodyBinary);
                 jsm->SetAttribute(ctx, network_request, "body", requestBody);
 
                 JSV document_cookie = jsm->GetProperty(ctx, global, {
-                    {"document"},
-                    {"cookie"},
+                    { "document" },
+                    { "cookie" },
                     });
                 jsm->SetAttribute(ctx, document_cookie, "cookie", GetEnv("HTTP_COOKIE", request.envp));
 
@@ -472,15 +473,15 @@ int FastCgiMain(const OpaqueData& data, std::wstring startFilePath = L"") {
                     JSV global = jsm->NewGlobalObject(ctx);
 
                     JSV response = jsm->GetProperty(ctx, global, {
-                        {"network"},
-                        {"response"},
+                        { "network" },
+                        { "response" },
                         });
 
                     JSV response_header = jsm->GetProperty(ctx, response, "header");
                     headerObject = {
-                     {L"Status",{OBJECTStruct{static_cast<std::wstring>(L"200 OK")}}},
-                     {L"Allow",{OBJECTStruct{static_cast<std::wstring>(L"GET, HEAD, OPTIONS")}}},
-                     {L"Content-Type",{OBJECTStruct{static_cast<std::wstring>(L"text/plain; charset=UTF-8")}}},
+                     { L"Status",{ OBJECTStruct{ static_cast<std::wstring>(L"200 OK") } } },
+                     { L"Allow",{ OBJECTStruct{ static_cast<std::wstring>(L"GET, HEAD, OPTIONS") } } },
+                     { L"Content-Type",{ OBJECTStruct{ static_cast<std::wstring>(L"text/plain; charset=UTF-8") } } },
                     };
                     OBJECT headerTemp = {};
                     jsm->ReadJSValueAsObject(ctx, response_header, headerTemp);
