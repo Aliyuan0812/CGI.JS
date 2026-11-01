@@ -2588,6 +2588,8 @@ namespace cjs {
     bool isStartByFastCgi = false;
 
     double timeout = 0.0;
+    int maxThreads = 0;
+    double maxTimeout = 0.0;
     bool isFlushNamedPipe = false;
     bool isOutputError = false;
     bool isStrictStandard = false;
@@ -2627,6 +2629,8 @@ namespace cjs {
 
             try {
                 timeout = configObject[L"fastcgi"][L"timeout"].get<double>();
+                maxThreads = configObject[L"fastcgi"][L"maxThreads"].get<int>();
+                maxTimeout = configObject[L"fastcgi"][L"maxTimeout"].get<double>();
                 isFlushNamedPipe = configObject[L"fastcgi"][L"isFlushNamedPipe"].get<bool>();
                 isOutputError = configObject[L"fastcgi"][L"isOutputError"].get<bool>();
                 isStrictStandard = configObject[L"fastcgi"][L"isStrictStandard"].get<bool>();
@@ -9701,10 +9705,13 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, "id");
                 ULL id = 0;
-
+                if (!ReadJSValueAsUint64(ctx, js_id, id)) {
+                    JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
+                    return JS_EXCEPTION;
+                }
                 jsmdPtr->networkHttpList_mtx.lock_shared();
                 auto it = jsmdPtr->networkHttpList.find(id);
-                if (!ReadJSValueAsUint64(ctx, js_id, id) || it == jsmdPtr->networkHttpList.end()) {
+                if (it == jsmdPtr->networkHttpList.end()) {
                     jsmdPtr->networkHttpList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
                     return JS_EXCEPTION;
@@ -9733,10 +9740,13 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, "id");
                 ULL id = 0;
-
+                if (!ReadJSValueAsUint64(ctx, js_id, id)) {
+                    JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
+                    return JS_EXCEPTION;
+                }
                 jsmdPtr->networkHttpList_mtx.lock_shared();
                 auto it = jsmdPtr->networkHttpList.find(id);
-                if (!ReadJSValueAsUint64(ctx, js_id, id) || it == jsmdPtr->networkHttpList.end()) {
+                if (it == jsmdPtr->networkHttpList.end()) {
                     jsmdPtr->networkHttpList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
                     return JS_EXCEPTION;
@@ -9852,10 +9862,13 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, "id");
                 ULL id = 0;
-
+                if (!ReadJSValueAsUint64(ctx, js_id, id)) {
+                    JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
+                    return JS_EXCEPTION;
+                }
                 jsmdPtr->networkHttpList_mtx.lock_shared();
                 auto it = jsmdPtr->networkHttpList.find(id);
-                if (!ReadJSValueAsUint64(ctx, js_id, id) || it == jsmdPtr->networkHttpList.end()) {
+                if (it == jsmdPtr->networkHttpList.end()) {
                     jsmdPtr->networkHttpList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
                     return JS_EXCEPTION;
@@ -9890,10 +9903,13 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, "id");
                 ULL id = 0;
-
+                if (!ReadJSValueAsUint64(ctx, js_id, id)) {
+                    JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
+                    return JS_EXCEPTION;
+                }
                 jsmdPtr->networkHttpList_mtx.lock_shared();
                 auto it = jsmdPtr->networkHttpList.find(id);
-                if (!ReadJSValueAsUint64(ctx, js_id, id) || it == jsmdPtr->networkHttpList.end()) {
+                if (it == jsmdPtr->networkHttpList.end()) {
                     jsmdPtr->networkHttpList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
                     return JS_EXCEPTION;
@@ -9921,10 +9937,13 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, "id");
                 ULL id = 0;
-
+                if (!ReadJSValueAsUint64(ctx, js_id, id)) {
+                    JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
+                    return JS_EXCEPTION;
+                }
                 jsmdPtr->networkHttpList_mtx.lock_shared();
                 auto it = jsmdPtr->networkHttpList.find(id);
-                if (!ReadJSValueAsUint64(ctx, js_id, id) || it == jsmdPtr->networkHttpList.end()) {
+                if (it == jsmdPtr->networkHttpList.end()) {
                     jsmdPtr->networkHttpList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
                     return JS_EXCEPTION;
@@ -9943,10 +9962,13 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, "id");
                 ULL id = 0;
-
+                if (!ReadJSValueAsUint64(ctx, js_id, id)) {
+                    JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
+                    return JS_EXCEPTION;
+                }
                 jsmdPtr->networkHttpList_mtx.lock_shared();
                 auto it = jsmdPtr->networkHttpList.find(id);
-                if (!ReadJSValueAsUint64(ctx, js_id, id) || it == jsmdPtr->networkHttpList.end()) {
+                if (it == jsmdPtr->networkHttpList.end()) {
                     jsmdPtr->networkHttpList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
                     return JS_EXCEPTION;
@@ -9978,10 +10000,13 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, "id");
                 ULL id = 0;
-
+                if (!ReadJSValueAsUint64(ctx, js_id, id)) {
+                    JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
+                    return JS_EXCEPTION;
+                }
                 jsmdPtr->networkHttpList_mtx.lock_shared();
                 auto it = jsmdPtr->networkHttpList.find(id);
-                if (!ReadJSValueAsUint64(ctx, js_id, id) || it == jsmdPtr->networkHttpList.end()) {
+                if (it == jsmdPtr->networkHttpList.end()) {
                     jsmdPtr->networkHttpList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
                     return JS_EXCEPTION;
@@ -10007,22 +10032,21 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, "id");
                 ULL id = 0;
-
+                if (!ReadJSValueAsUint64(ctx, js_id, id)) {
+                    JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
+                    return JS_EXCEPTION;
+                }
                 jsmdPtr->networkHttpList_mtx.lock();
                 auto it = jsmdPtr->networkHttpList.find(id);
-                if (!ReadJSValueAsUint64(ctx, js_id, id) || it == jsmdPtr->networkHttpList.end()) {
+                if (it == jsmdPtr->networkHttpList.end()) {
                     jsmdPtr->networkHttpList_mtx.unlock();
                     JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
                     return JS_EXCEPTION;
                 }
-
                 it->second->release();
-
                 delete it->second;
                 jsmdPtr->networkHttpList.erase(it);
-
                 jsmdPtr->networkHttpList_mtx.unlock();
-
                 return JS_UNDEFINED;
                 });
             SetAttribute(ctx, returnValue, GetProperty(ctx, NewGlobalObject(ctx), {
@@ -11805,25 +11829,19 @@ namespace cjs {
             return JS_NewString(ctx, wstringToString(FormatPath(apppath(0))).c_str());
         }
         static JSValue system_exit(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
-            if (argumentCount != 0) {
-                JS_ThrowTypeError(ctx, "[system.exit] No arguments are supported");
-                return JS_EXCEPTION;
-            }
-
             JSMData* jsmdPtr = nullptr;
             if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
-                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
+                JS_ThrowInternalError(ctx, "[native code][system.exit]");
                 return JS_EXCEPTION;
             }
-
             if (jsmdPtr->js == nullptr || IsAliveInstance(jsmdPtr->js) == false) {
-                JS_ThrowInternalError(ctx, "[system.exit] This context has exited already");
+                JS_ThrowInternalError(ctx, "[native code][system.exit]");
                 return JS_EXCEPTION;
             }
-
             jsmdPtr->isNeedBreak = true;
             ChildSystemExitInstance(jsmdPtr->js);
-            return JS_UNDEFINED;
+            JS_ThrowInternalError(ctx, "[native code][system.exit]");
+            return JS_EXCEPTION;
         }
         static JSValue system_help(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             std::string help = R"(访问 'https://github.com/Aliyuan0812/CGI.JS/blob/master/docs/api-reference.md' 获取更多帮助。)";
@@ -20657,7 +20675,7 @@ namespace cjs {
                     }
                 }
                 if (errorType == "InternalError") {
-                    if (errorMessage == "interrupted") {
+                    if (errorMessage == "interrupted" || errorMessage == "[native code][system.exit]") {
                         jsif.isSuccess = true;
                         jsif.message = L"undefined";
                         goto EndProcess;

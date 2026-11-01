@@ -30,7 +30,7 @@ bool arg_version = false;
 
 int Main(const OpaqueData& data) {
     mode = "repl";
-    
+
     int consoleResult = CreateConsole(L"CGI.JS - " + cplatform + AY_CJS_CPP_VW + L"", arg_native);
     if (consoleResult == 0) {
         return EXIT_FAILURE;
@@ -44,13 +44,13 @@ int Main(const OpaqueData& data) {
 
     if (arg_version) {
         CreateOutput(AY_CJS_CPP_VW);
-        if (isAlwaysPauseWhenQuit) { 
+        if (isAlwaysPauseWhenQuit) {
             CreateOutput(L"\n");
             system("pause");
         }
         return EXIT_SUCCESS;
     }
-    
+
     JS js = nullptr;
     try {
         js = std::make_shared<JavaScript>();
@@ -113,7 +113,7 @@ int Main(const OpaqueData& data) {
             }
         }
         else {
-            CreateOutput(((result.errorFront != L"") ? (result.errorFront + L":"): L"") + result.message + L"\n", GetColorValue(L"Error"));
+            CreateOutput(((result.errorFront != L"") ? (result.errorFront + L":") : L"") + result.message + L"\n", GetColorValue(L"Error"));
             OutputStack(result.errorStack);
         }
     }
@@ -283,7 +283,7 @@ int FileMain(const OpaqueData& data) {
 EndProcess:;
 
     if (isAlwaysPauseWhenQuit && isConsoleEnv && console) system("pause");
-    
+
     js = nullptr;
     return EXIT_SUCCESS;
 }
@@ -293,8 +293,13 @@ int FastCgiMain(const OpaqueData& data, std::wstring startFilePath = L"") {
 
     _putenv_s("FCGI_TIMEOUT", std::to_string(timeout).c_str());
 
+    if (FCGX_Init() < 0) {
+        return EXIT_FAILURE;
+    }
+
     FCGX_Request request;
-    if (FCGX_Init() < 0 || FCGX_InitRequest(&request, 0, 0) < 0) {
+
+    if (FCGX_InitRequest(&request, 0, 0) < 0) {
         return EXIT_FAILURE;
     }
 
@@ -583,6 +588,7 @@ int FastCgiMain(const OpaqueData& data, std::wstring startFilePath = L"") {
             js = nullptr;
         }
         if (isFlushNamedPipe) FCGX_FFlush(request.out);
+
         FCGX_Finish_r(&request);
         ClearOutput();
     }
@@ -605,7 +611,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
     std::wstring customConfigPath = L"./config.json";
     bool isDisabledExtension = false;
     std::wstring customExtensionPath = L"./Extension/";
-    
+
     if (commandArgList.count(L"config")) {
         if (commandArgList[L"config"] == L"disabled") {
             isDisabledConfig = true;
@@ -629,33 +635,35 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
         }
     }
     configObject = {
-        {L"fastcgi",{
+        { L"fastcgi",{
             OBJECT{
-                { L"timeout", { static_cast<double>(1 * 3600 * 1000) } },
-                { L"isFlushNamedPipe", { static_cast<bool>(false) } },
-                { L"isOutputError", { static_cast<bool>(false) } },
-                { L"isStrictStandard", { static_cast<bool>(true) } },
-                { L"isModernMode", { static_cast<bool>(true) } },
+                { L"timeout",{ static_cast<double>(1 * 3600 * 1000) } },
+                { L"maxThreads",{ static_cast<int>(-1) } },
+                { L"maxTimeout",{ static_cast<double>(300000) } },
+                { L"isFlushNamedPipe",{ static_cast<bool>(false) } },
+                { L"isOutputError",{ static_cast<bool>(false) } },
+                { L"isStrictStandard",{ static_cast<bool>(true) } },
+                { L"isModernMode",{ static_cast<bool>(true) } },
             }
-        }},
-        {L"shell",{
+        } },
+        { L"shell",{
             OBJECT{
-                { L"isShowReturnValue", { static_cast<bool>(true) } },
-                { L"isShowReturnDetail", { static_cast<bool>(true) } },
-                { L"isAlwaysPauseWhenQuit", { static_cast<bool>(true) } },
+                { L"isShowReturnValue",{ static_cast<bool>(true) } },
+                { L"isShowReturnDetail",{ static_cast<bool>(true) } },
+                { L"isAlwaysPauseWhenQuit",{ static_cast<bool>(true) } },
             }
-        }},
-        {L"file",{
+        } },
+        { L"file",{
             OBJECT{
-                { L"isShowConsole", { static_cast<bool>(true) } },
-                { L"isTotalOutput", { static_cast<bool>(false) } },
+                { L"isShowConsole",{ static_cast<bool>(true) } },
+                { L"isTotalOutput",{ static_cast<bool>(false) } },
             }
-        }},
-        {L"general",{
+        } },
+        { L"general",{
             OBJECT{
-                { L"isModuleMode", { static_cast<bool>(true) } },
+                { L"isModuleMode",{ static_cast<bool>(true) } },
             }
-        }},
+        } },
     };
 
     if (!isDisabledConfig) {
@@ -674,7 +682,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
             for (const auto& pair : config) {
                 configObject[pair.first] = pair.second;
             }
-        }catch(std::exception& ec){
+        }
+        catch (std::exception& ec) {
             tempOutput += L"Warning: The config file is invalid JSON. Configurations do not take effect. (Reason: '" + stringToWstring(std::string(ec.what())) + L"')\n";
         }
     }
@@ -762,7 +771,7 @@ ProcessExtensionEnd:;
     }
 
     int result = 0;
-    if (!arg_interactive && isStartByFastCgi){
+    if (!arg_interactive && isStartByFastCgi) {
         result = FastCgiMain(data, commandStartFilePath);
     }
     else if (!arg_interactive && !commandStartFilePath.empty()) {
