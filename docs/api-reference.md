@@ -2383,7 +2383,7 @@
 
   ### 语法
   ```js
-  script.run(functionByteCode) : Promise<any>
+  script.run(functionByteCode: FunctionByteCode) : Promise<any>
   ```
 
   ### 参数
@@ -2431,7 +2431,7 @@ c
 
   ### 语法
   ```js
-  script.validate(functionByteCode) : Boolean
+  script.validate(functionByteCode: FunctionByteCode) : Boolean
   ```
 
   ### 参数
