@@ -40,6 +40,7 @@
 #include <filesystem>
 #include <fstream>
 #include <unordered_set>
+#include <flat_map>
 #include <bcrypt.h>
 #include <mutex>
 #include <queue>
@@ -316,13 +317,15 @@ namespace cjs {
 
     std::string mode = "";
     HWND console = NULL;
-    std::atomic<bool> isWTConsole = false;
+    std::atomic<bool> isConsoleAnsiSupportedLocked = false;
+    std::atomic<bool> isConsoleAnsiSupported = false;
     std::atomic<bool> isConsoleEnv = false;
     std::atomic<bool> isQuit = false;
+    std::function<void()> onctrlC = nullptr;
     BOOL WINAPI ConsoleCtrlHandler(DWORD dwCtrlType) {
         switch (dwCtrlType) {
         case CTRL_C_EVENT:
-            isQuit = true;
+            if (onctrlC) onctrlC();
             break;
         case CTRL_BREAK_EVENT:
             isQuit = true;
@@ -544,85 +547,306 @@ namespace cjs {
 #define NOINLINE __attribute__((noinline))
 #define PREFETCH(x) __builtin_prefetch(x, 0, 3)
 #endif
+
     using ThreadId = DWORD;
-    class RecursiveMutex {
+
+    class SharedMutex {
     private:
-        SRWLOCK            m_srwLock{ SRWLOCK_INIT };
-        alignas(8) std::atomic<ThreadId> m_owner{ 0 };
-        alignas(4) std::atomic<int32_t>  m_count{ 0 };
-        RecursiveMutex(const RecursiveMutex&) = delete;
-        RecursiveMutex& operator=(const RecursiveMutex&) = delete;
-        RecursiveMutex(RecursiveMutex&&) = delete;
-        RecursiveMutex& operator=(RecursiveMutex&&) = delete;
+        SRWLOCK m_srwLock{ SRWLOCK_INIT };
+        alignas(8) std::atomic<ThreadId> m_exclusiveOwner{ 0 };
+        alignas(4) std::atomic<int32_t> m_sharedCount{ 0 };
+
         NOINLINE void lock_slow_path(ThreadId tid) noexcept {
             AcquireSRWLockExclusive(&m_srwLock);
-            m_owner.store(tid, std::memory_order_release);
-            m_count.store(1, std::memory_order_relaxed);
+            m_exclusiveOwner.store(tid, std::memory_order_release);
         }
-        NOINLINE bool try_lock_slow_path(ThreadId tid) noexcept {
+
+        NOINLINE void lock_shared_slow_path() noexcept {
+            AcquireSRWLockShared(&m_srwLock);
+            m_sharedCount.fetch_add(1, std::memory_order_relaxed);
+        }
+
+    public:
+        FORCE_INLINE SharedMutex() noexcept = default;
+
+        FORCE_INLINE SharedMutex(const SharedMutex&) noexcept
+            : m_srwLock{ SRWLOCK_INIT }
+            , m_exclusiveOwner{ 0 }
+            , m_sharedCount{ 0 }
+        {}
+
+        FORCE_INLINE SharedMutex& operator=(const SharedMutex& rhs) noexcept {
+            if (this != &rhs) {
+#ifdef _DEBUG
+                if (m_exclusiveOwner.load(std::memory_order_acquire) != 0 || m_sharedCount.load(std::memory_order_acquire) != 0) {
+                    __debugbreak();
+                }
+#endif
+                m_srwLock = SRWLOCK_INIT;
+                m_exclusiveOwner.store(0, std::memory_order_relaxed);
+                m_sharedCount.store(0, std::memory_order_relaxed);
+            }
+            return *this;
+        }
+
+        FORCE_INLINE SharedMutex(SharedMutex&&) noexcept
+            : m_srwLock{ SRWLOCK_INIT }
+            , m_exclusiveOwner{ 0 }
+            , m_sharedCount{ 0 }
+        {}
+
+        FORCE_INLINE SharedMutex& operator=(SharedMutex&& rhs) noexcept {
+            if (this != &rhs) {
+#ifdef _DEBUG
+                if (m_exclusiveOwner.load(std::memory_order_acquire) != 0 || m_sharedCount.load(std::memory_order_acquire) != 0) {
+                    __debugbreak();
+                }
+#endif
+                m_srwLock = SRWLOCK_INIT;
+                m_exclusiveOwner.store(0, std::memory_order_relaxed);
+                m_sharedCount.store(0, std::memory_order_relaxed);
+            }
+            return *this;
+        }
+
+        FORCE_INLINE ~SharedMutex() noexcept {
+#ifdef _DEBUG
+            if (m_exclusiveOwner.load(std::memory_order_acquire) != 0 || m_sharedCount.load(std::memory_order_acquire) != 0) {
+                __debugbreak();
+            }
+#endif
+        }
+
+        FORCE_INLINE void lock() noexcept {
+            PREFETCH(&m_srwLock);
+            PREFETCH(&m_exclusiveOwner);
+            const ThreadId tid = GetCurrentThreadId();
+#ifdef _DEBUG
+            if (m_exclusiveOwner.load(std::memory_order_acquire) == tid) {
+                __debugbreak();
+            }
+#endif
             if (TryAcquireSRWLockExclusive(&m_srwLock)) {
-                m_owner.store(tid, std::memory_order_release);
-                m_count.store(1, std::memory_order_relaxed);
+                m_exclusiveOwner.store(tid, std::memory_order_release);
+                return;
+            }
+            lock_slow_path(tid);
+        }
+
+        FORCE_INLINE bool try_lock() noexcept {
+            PREFETCH(&m_srwLock);
+            PREFETCH(&m_exclusiveOwner);
+            const ThreadId tid = GetCurrentThreadId();
+#ifdef _DEBUG
+            if (m_exclusiveOwner.load(std::memory_order_acquire) == tid) {
+                __debugbreak();
+                return false;
+            }
+#endif
+            if (TryAcquireSRWLockExclusive(&m_srwLock)) {
+                m_exclusiveOwner.store(tid, std::memory_order_release);
                 return true;
             }
             return false;
         }
 
-    public:
-        FORCE_INLINE RecursiveMutex() noexcept = default;
-        FORCE_INLINE ~RecursiveMutex() noexcept {
+        FORCE_INLINE void unlock() noexcept {
 #ifdef _DEBUG
-            if (m_owner.load(std::memory_order_acquire) != 0) {
+            const ThreadId tid = GetCurrentThreadId();
+            if (m_exclusiveOwner.load(std::memory_order_acquire) != tid) {
                 __debugbreak();
             }
 #endif
+            m_exclusiveOwner.store(0, std::memory_order_relaxed);
+            ReleaseSRWLockExclusive(&m_srwLock);
         }
-        FORCE_INLINE void lock() noexcept {
-            PREFETCH(&m_owner);
-            PREFETCH(&m_count);
-            const ThreadId tid = GetCurrentThreadId();
-            const ThreadId owner = m_owner.load(std::memory_order_relaxed);
-            if (owner != static_cast<ThreadId>(0xFFFFFFFFFFFFFFFF) && owner == tid) {
-                m_count.fetch_add(1, std::memory_order_relaxed);
+
+        FORCE_INLINE void lock_shared() noexcept {
+            PREFETCH(&m_srwLock);
+            PREFETCH(&m_sharedCount);
+            if (TryAcquireSRWLockShared(&m_srwLock)) {
+                m_sharedCount.fetch_add(1, std::memory_order_relaxed);
                 return;
             }
-            lock_slow_path(tid);
+            lock_shared_slow_path();
         }
-        FORCE_INLINE void unlock() noexcept {
-            const int32_t old_count = m_count.fetch_sub(1, std::memory_order_acq_rel);
 
+        FORCE_INLINE bool try_lock_shared() noexcept {
+            PREFETCH(&m_srwLock);
+            PREFETCH(&m_sharedCount);
+            if (TryAcquireSRWLockShared(&m_srwLock)) {
+                m_sharedCount.fetch_add(1, std::memory_order_relaxed);
+                return true;
+            }
+            return false;
+        }
+
+        FORCE_INLINE void unlock_shared() noexcept {
+            const int32_t old_count = m_sharedCount.fetch_sub(1, std::memory_order_acq_rel);
 #ifdef _DEBUG
-            const ThreadId tid = GetCurrentThreadId();
-            if (old_count <= 0 || m_owner.load(std::memory_order_acquire) != tid) {
+            if (old_count <= 0) {
                 __debugbreak();
             }
 #endif
-            if (old_count == 1) {
-                m_owner.store(0, std::memory_order_relaxed);
-                ReleaseSRWLockExclusive(&m_srwLock);
-            }
-        }
-        FORCE_INLINE bool try_lock() noexcept {
-            PREFETCH(&m_owner);
-            const ThreadId tid = GetCurrentThreadId();
-            const ThreadId owner = m_owner.load(std::memory_order_relaxed);
-            if (owner != static_cast<ThreadId>(0xFFFFFFFFFFFFFFFF) && owner == tid) {
-                m_count.fetch_add(1, std::memory_order_relaxed);
-                return true;
-            }
-            return try_lock_slow_path(tid);
+            ReleaseSRWLockShared(&m_srwLock);
         }
     };
+
 #undef FORCE_INLINE
 #undef NOINLINE
 #undef PREFETCH
+
+    template <typename T>
+    class Atomic {
+    private:
+        std::atomic<T> m_val;
+        using arithmetic_arg_t = typename std::conditional<std::is_pointer_v<T>, std::ptrdiff_t, T>::type;
+
+    public:
+        static constexpr bool is_always_lock_free = std::atomic<T>::is_always_lock_free;
+
+        Atomic() noexcept = default;
+        Atomic(T desired) noexcept : m_val(desired) {}
+
+        Atomic(const Atomic& other) noexcept
+            : m_val(other.load(std::memory_order_seq_cst)) {}
+
+        Atomic(Atomic&& other) noexcept
+            : m_val(other.load(std::memory_order_seq_cst)) {}
+
+        Atomic& operator=(const Atomic& other) noexcept {
+            if (this != &other) {
+                store(other.load(std::memory_order_seq_cst));
+            }
+            return *this;
+        }
+
+        Atomic& operator=(Atomic&& other) noexcept {
+            if (this != &other) {
+                store(other.load(std::memory_order_seq_cst));
+            }
+            return *this;
+        }
+
+        T operator=(T desired) noexcept {
+            store(desired);
+            return desired;
+        }
+
+        bool is_lock_free() const noexcept {
+            return m_val.is_lock_free();
+        }
+
+        void store(T desired, std::memory_order order = std::memory_order_seq_cst) noexcept {
+            m_val.store(desired, order);
+        }
+
+        T load(std::memory_order order = std::memory_order_seq_cst) const noexcept {
+            return m_val.load(order);
+        }
+
+        operator T() const noexcept {
+            return load();
+        }
+
+        T exchange(T desired, std::memory_order order = std::memory_order_seq_cst) noexcept {
+            return m_val.exchange(desired, order);
+        }
+
+        bool compare_exchange_weak(T& expected, T desired,
+            std::memory_order success, std::memory_order failure) noexcept {
+            return m_val.compare_exchange_weak(expected, desired, success, failure);
+        }
+
+        bool compare_exchange_weak(T& expected, T desired,
+            std::memory_order order = std::memory_order_seq_cst) noexcept {
+            return m_val.compare_exchange_weak(expected, desired, order);
+        }
+
+        bool compare_exchange_strong(T& expected, T desired,
+            std::memory_order success, std::memory_order failure) noexcept {
+            return m_val.compare_exchange_strong(expected, desired, success, failure);
+        }
+
+        bool compare_exchange_strong(T& expected, T desired,
+            std::memory_order order = std::memory_order_seq_cst) noexcept {
+            return m_val.compare_exchange_strong(expected, desired, order);
+        }
+
+        T fetch_add(arithmetic_arg_t arg, std::memory_order order = std::memory_order_seq_cst) noexcept {
+            return m_val.fetch_add(arg, order);
+        }
+
+        T fetch_sub(arithmetic_arg_t arg, std::memory_order order = std::memory_order_seq_cst) noexcept {
+            return m_val.fetch_sub(arg, order);
+        }
+
+        T fetch_and(T arg, std::memory_order order = std::memory_order_seq_cst) noexcept {
+            return m_val.fetch_and(arg, order);
+        }
+
+        T fetch_or(T arg, std::memory_order order = std::memory_order_seq_cst) noexcept {
+            return m_val.fetch_or(arg, order);
+        }
+
+        T fetch_xor(T arg, std::memory_order order = std::memory_order_seq_cst) noexcept {
+            return m_val.fetch_xor(arg, order);
+        }
+
+        T operator++() noexcept {
+            return fetch_add(1) + 1;
+        }
+
+        T operator++(int) noexcept {
+            return fetch_add(1);
+        }
+
+        T operator--() noexcept {
+            return fetch_sub(1) - 1;
+        }
+
+        T operator--(int) noexcept {
+            return fetch_sub(1);
+        }
+
+        T operator+=(arithmetic_arg_t arg) noexcept {
+            return fetch_add(arg) + arg;
+        }
+
+        T operator-=(arithmetic_arg_t arg) noexcept {
+            return fetch_sub(arg) - arg;
+        }
+
+        T operator&=(T arg) noexcept {
+            return fetch_and(arg) & arg;
+        }
+
+        T operator|=(T arg) noexcept {
+            return fetch_or(arg) | arg;
+        }
+
+        T operator^=(T arg) noexcept {
+            return fetch_xor(arg) ^ arg;
+        }
+
+        void wait(T old, std::memory_order order = std::memory_order_seq_cst) const noexcept {
+            m_val.wait(old, order);
+        }
+
+        void notify_one() noexcept {
+            m_val.notify_one();
+        }
+
+        void notify_all() noexcept {
+            m_val.notify_all();
+        }
+    };
 
     template <typename K, typename V>
     class ordered_map {
     private:
         std::vector<std::pair<K, V>> m_data;
         std::unordered_map<K, size_t> m_index_map;
-        mutable RecursiveMutex m_mutex;
 
     public:
         using key_type = K;
@@ -638,6 +862,7 @@ namespace cjs {
         using const_reference = const value_type&;
 
         ordered_map() = default;
+
         ordered_map(std::initializer_list<value_type> init) {
             for (const auto& pair : init) {
                 insert(pair);
@@ -649,21 +874,14 @@ namespace cjs {
             insert(first, last);
         }
 
-        ordered_map(const ordered_map& other) {
-            std::lock_guard<decltype(other.m_mutex)> lock(other.m_mutex);
-            m_data = other.m_data;
-            m_index_map = other.m_index_map;
-        }
+        ordered_map(const ordered_map& other)
+            : m_data(other.m_data), m_index_map(other.m_index_map) {}
 
-        ordered_map(ordered_map&& other) noexcept {
-            std::lock_guard<decltype(other.m_mutex)> lock(other.m_mutex);
-            m_data = std::move(other.m_data);
-            m_index_map = std::move(other.m_index_map);
-        }
+        ordered_map(ordered_map&& other) noexcept
+            : m_data(std::move(other.m_data)), m_index_map(std::move(other.m_index_map)) {}
 
         ordered_map& operator=(const ordered_map& other) {
             if (this != &other) {
-                std::scoped_lock lock(m_mutex, other.m_mutex);
                 m_data = other.m_data;
                 m_index_map = other.m_index_map;
             }
@@ -672,7 +890,6 @@ namespace cjs {
 
         ordered_map& operator=(ordered_map&& other) noexcept {
             if (this != &other) {
-                std::scoped_lock lock(m_mutex, other.m_mutex);
                 m_data = std::move(other.m_data);
                 m_index_map = std::move(other.m_index_map);
             }
@@ -680,17 +897,12 @@ namespace cjs {
         }
 
         ordered_map& operator=(std::initializer_list<value_type> init) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             clear();
             insert(init);
             return *this;
         }
 
         ~ordered_map() = default;
-
-        void lock() const { m_mutex.lock(); }
-        void unlock() const { m_mutex.unlock(); }
-        bool try_lock() const { return m_mutex.try_lock(); }
 
         iterator begin() noexcept { return m_data.begin(); }
         const_iterator begin() const noexcept { return m_data.cbegin(); }
@@ -707,22 +919,18 @@ namespace cjs {
         const_reverse_iterator crend() const noexcept { return m_data.crend(); }
 
         bool empty() const noexcept {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             return m_data.empty();
         }
 
         size_type size() const noexcept {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             return m_data.size();
         }
 
         size_type max_size() const noexcept {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             return std::min(m_data.max_size(), m_index_map.max_size());
         }
 
         V& operator[](const K& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = m_index_map.find(key);
             if (it != m_index_map.end()) {
                 return m_data[it->second].second;
@@ -730,12 +938,17 @@ namespace cjs {
             m_data.emplace_back(std::piecewise_construct,
                 std::forward_as_tuple(key),
                 std::forward_as_tuple(V{}));
-            m_index_map[key] = m_data.size() - 1;
+            try {
+                m_index_map[key] = m_data.size() - 1;
+            }
+            catch (...) {
+                m_data.pop_back();
+                throw;
+            }
             return m_data.back().second;
         }
 
         V& operator[](K&& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = m_index_map.find(key);
             if (it != m_index_map.end()) {
                 return m_data[it->second].second;
@@ -743,12 +956,17 @@ namespace cjs {
             m_data.emplace_back(std::piecewise_construct,
                 std::forward_as_tuple(std::move(key)),
                 std::forward_as_tuple(V{}));
-            m_index_map[m_data.back().first] = m_data.size() - 1;
+            try {
+                m_index_map[m_data.back().first] = m_data.size() - 1;
+            }
+            catch (...) {
+                m_data.pop_back();
+                throw;
+            }
             return m_data.back().second;
         }
 
         V& at(const K& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = m_index_map.find(key);
             if (it == m_index_map.end()) {
                 throw std::out_of_range("ordered_map::at: key not found");
@@ -757,7 +975,6 @@ namespace cjs {
         }
 
         const V& at(const K& key) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = m_index_map.find(key);
             if (it == m_index_map.end()) {
                 throw std::out_of_range("ordered_map::at: key not found");
@@ -766,7 +983,6 @@ namespace cjs {
         }
 
         reference at(size_type idx) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             if (idx >= m_data.size()) {
                 throw std::out_of_range("ordered_map::at: index out of range");
             }
@@ -774,7 +990,6 @@ namespace cjs {
         }
 
         const_reference at(size_type idx) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             if (idx >= m_data.size()) {
                 throw std::out_of_range("ordered_map::at: index out of range");
             }
@@ -782,107 +997,103 @@ namespace cjs {
         }
 
         iterator find(const K& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = m_index_map.find(key);
             return (it != m_index_map.end()) ? m_data.begin() + it->second : end();
         }
 
         const_iterator find(const K& key) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = m_index_map.find(key);
             return (it != m_index_map.end()) ? m_data.cbegin() + it->second : cend();
         }
 
         size_type count(const K& key) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             return m_index_map.count(key);
         }
 
         bool contains(const K& key) const noexcept {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             return m_index_map.contains(key);
         }
 
         iterator lower_bound(const K& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = find(key);
             return it != end() ? it : end();
         }
 
         const_iterator lower_bound(const K& key) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = find(key);
             return it != cend() ? it : cend();
         }
 
         iterator upper_bound(const K& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = find(key);
             return it != end() ? std::next(it) : end();
         }
 
         const_iterator upper_bound(const K& key) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = find(key);
             return it != cend() ? std::next(it) : cend();
         }
 
         std::pair<iterator, iterator> equal_range(const K& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             return { lower_bound(key), upper_bound(key) };
         }
 
         std::pair<const_iterator, const_iterator> equal_range(const K& key) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             return { lower_bound(key), upper_bound(key) };
         }
 
         std::pair<iterator, bool> insert(const value_type& pair) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = m_index_map.find(pair.first);
             if (it != m_index_map.end()) {
                 m_data[it->second].second = pair.second;
                 return { m_data.begin() + it->second, false };
             }
             m_data.push_back(pair);
-            m_index_map[pair.first] = m_data.size() - 1;
+            try {
+                m_index_map[pair.first] = m_data.size() - 1;
+            }
+            catch (...) {
+                m_data.pop_back();
+                throw;
+            }
             return { std::prev(m_data.end()), true };
         }
 
         std::pair<iterator, bool> insert(value_type&& pair) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = m_index_map.find(pair.first);
             if (it != m_index_map.end()) {
                 m_data[it->second].second = std::move(pair.second);
                 return { m_data.begin() + it->second, false };
             }
             m_data.push_back(std::move(pair));
-            m_index_map[m_data.back().first] = m_data.size() - 1;
+            try {
+                m_index_map[m_data.back().first] = m_data.size() - 1;
+            }
+            catch (...) {
+                m_data.pop_back();
+                throw;
+            }
             return { std::prev(m_data.end()), true };
         }
 
         iterator insert(const_iterator hint, const value_type& pair) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             (void)hint;
             return insert(pair).first;
         }
 
         iterator insert(const_iterator hint, value_type&& pair) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             (void)hint;
             return insert(std::move(pair)).first;
         }
 
         template <typename InputIt>
         void insert(InputIt first, InputIt last) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             for (; first != last; ++first) {
                 insert(*first);
             }
         }
 
         void insert(std::initializer_list<value_type> init) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             for (const auto& p : init) {
                 insert(p);
             }
@@ -890,7 +1101,6 @@ namespace cjs {
 
         template <typename... Args>
         std::pair<iterator, bool> emplace(Args&&... args) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             value_type temp_pair(std::forward<Args>(args)...);
             auto idx_it = m_index_map.find(temp_pair.first);
 
@@ -899,27 +1109,31 @@ namespace cjs {
             }
 
             m_data.push_back(std::move(temp_pair));
-            size_type new_idx = m_data.size() - 1;
-            m_index_map[m_data.back().first] = new_idx;
-            return { m_data.begin() + new_idx, true };
+            try {
+                size_type new_idx = m_data.size() - 1;
+                m_index_map[m_data.back().first] = new_idx;
+                return { m_data.begin() + new_idx, true };
+            }
+            catch (...) {
+                m_data.pop_back();
+                throw;
+            }
         }
 
         template <typename... Args>
         iterator emplace_hint(const_iterator hint, Args&&... args) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             (void)hint;
             return emplace(std::forward<Args>(args)...).first;
         }
 
         size_type erase(const K& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = m_index_map.find(key);
             if (it == m_index_map.end()) {
                 return 0;
             }
             size_type idx = it->second;
-            m_data.erase(m_data.begin() + idx);
             m_index_map.erase(it);
+            m_data.erase(m_data.begin() + idx);
             for (auto& [k, i] : m_index_map) {
                 if (i > idx) {
                     --i;
@@ -929,7 +1143,6 @@ namespace cjs {
         }
 
         iterator erase(iterator pos) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             if (pos == end()) {
                 return end();
             }
@@ -946,12 +1159,10 @@ namespace cjs {
         }
 
         iterator erase(const_iterator pos) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             return erase(begin() + std::distance(cbegin(), pos));
         }
 
         iterator erase(iterator first, iterator last) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             if (first == last) {
                 return last;
             }
@@ -961,10 +1172,10 @@ namespace cjs {
             for (auto it = first; it != last; ++it) {
                 keys_to_erase.push_back(it->first);
             }
-            iterator ret = m_data.erase(first, last);
             for (const K& key : keys_to_erase) {
                 m_index_map.erase(key);
             }
+            iterator ret = m_data.erase(first, last);
             for (auto& [k, i] : m_index_map) {
                 if (i >= start_idx) {
                     i -= erase_count;
@@ -975,14 +1186,12 @@ namespace cjs {
 
         void swap(ordered_map& other) noexcept {
             if (this != &other) {
-                std::scoped_lock lock(m_mutex, other.m_mutex);
                 m_data.swap(other.m_data);
                 m_index_map.swap(other.m_index_map);
             }
         }
 
         void clear() noexcept {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             m_data.clear();
             m_index_map.clear();
         }
@@ -992,14 +1201,12 @@ namespace cjs {
         }
 
         friend bool operator==(const ordered_map& lhs, const ordered_map& rhs) {
-            std::scoped_lock lock(lhs.m_mutex, rhs.m_mutex);
             return lhs.m_data == rhs.m_data;
         }
         friend bool operator!=(const ordered_map& lhs, const ordered_map& rhs) {
             return !(lhs == rhs);
         }
         friend bool operator<(const ordered_map& lhs, const ordered_map& rhs) {
-            std::scoped_lock lock(lhs.m_mutex, rhs.m_mutex);
             return lhs.m_data < rhs.m_data;
         }
         friend bool operator<=(const ordered_map& lhs, const ordered_map& rhs) {
@@ -1012,12 +1219,12 @@ namespace cjs {
             return !(lhs < rhs);
         }
     };
+
     template <typename K, typename V>
     class ordered_multimap {
     private:
         std::vector<std::pair<K, V>> m_data;
         std::unordered_map<K, std::vector<size_t>> m_index_map;
-        mutable RecursiveMutex m_mutex;
 
     public:
         using key_type = K;
@@ -1034,6 +1241,7 @@ namespace cjs {
         using key_compare = std::less<K>;
 
         ordered_multimap() = default;
+
         ordered_multimap(std::initializer_list<value_type> init) {
             insert(init);
         }
@@ -1043,21 +1251,14 @@ namespace cjs {
             insert(first, last);
         }
 
-        ordered_multimap(const ordered_multimap& other) {
-            std::lock_guard<decltype(other.m_mutex)> lock(other.m_mutex);
-            m_data = other.m_data;
-            m_index_map = other.m_index_map;
-        }
+        ordered_multimap(const ordered_multimap& other)
+            : m_data(other.m_data), m_index_map(other.m_index_map) {}
 
-        ordered_multimap(ordered_multimap&& other) noexcept {
-            std::lock_guard<decltype(other.m_mutex)> lock(other.m_mutex);
-            m_data = std::move(other.m_data);
-            m_index_map = std::move(other.m_index_map);
-        }
+        ordered_multimap(ordered_multimap&& other) noexcept
+            : m_data(std::move(other.m_data)), m_index_map(std::move(other.m_index_map)) {}
 
         ordered_multimap& operator=(const ordered_multimap& other) {
             if (this != &other) {
-                std::scoped_lock lock(m_mutex, other.m_mutex);
                 m_data = other.m_data;
                 m_index_map = other.m_index_map;
             }
@@ -1066,7 +1267,6 @@ namespace cjs {
 
         ordered_multimap& operator=(ordered_multimap&& other) noexcept {
             if (this != &other) {
-                std::scoped_lock lock(m_mutex, other.m_mutex);
                 m_data = std::move(other.m_data);
                 m_index_map = std::move(other.m_index_map);
             }
@@ -1074,17 +1274,12 @@ namespace cjs {
         }
 
         ordered_multimap& operator=(std::initializer_list<value_type> init) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             clear();
             insert(init);
             return *this;
         }
 
         ~ordered_multimap() = default;
-
-        void lock() const { m_mutex.lock(); }
-        void unlock() const { m_mutex.unlock(); }
-        bool try_lock() const { return m_mutex.try_lock(); }
 
         iterator begin() noexcept { return m_data.begin(); }
         const_iterator begin() const noexcept { return m_data.cbegin(); }
@@ -1101,38 +1296,44 @@ namespace cjs {
         const_reverse_iterator crend() const noexcept { return m_data.crend(); }
 
         bool empty() const noexcept {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             return m_data.empty();
         }
 
         size_type size() const noexcept {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             return m_data.size();
         }
 
         size_type max_size() const noexcept {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             return std::min(m_data.max_size(), m_index_map.max_size());
         }
 
         V& operator[](const K& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             m_data.emplace_back(key, V{});
             size_type new_idx = m_data.size() - 1;
-            m_index_map[key].push_back(new_idx);
+            try {
+                m_index_map[key].push_back(new_idx);
+            }
+            catch (...) {
+                m_data.pop_back();
+                throw;
+            }
             return m_data.back().second;
         }
 
         V& operator[](K&& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             m_data.emplace_back(std::move(key), V{});
             size_type new_idx = m_data.size() - 1;
-            m_index_map[m_data.back().first].push_back(new_idx);
+            try {
+                m_index_map[m_data.back().first].push_back(new_idx);
+            }
+            catch (...) {
+                m_data.pop_back();
+                throw;
+            }
             return m_data.back().second;
         }
 
         V& at(const K& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = m_index_map.find(key);
             if (it == m_index_map.end() || it->second.empty()) {
                 throw std::out_of_range("ordered_multimap::at: key not found");
@@ -1141,7 +1342,6 @@ namespace cjs {
         }
 
         const V& at(const K& key) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = m_index_map.find(key);
             if (it == m_index_map.end() || it->second.empty()) {
                 throw std::out_of_range("ordered_multimap::at: key not found");
@@ -1150,7 +1350,6 @@ namespace cjs {
         }
 
         reference at(size_type idx) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             if (idx >= m_data.size()) {
                 throw std::out_of_range("ordered_multimap::at: index out of range");
             }
@@ -1158,7 +1357,6 @@ namespace cjs {
         }
 
         const_reference at(size_type idx) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             if (idx >= m_data.size()) {
                 throw std::out_of_range("ordered_multimap::at: index out of range");
             }
@@ -1166,7 +1364,6 @@ namespace cjs {
         }
 
         iterator find(const K& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = m_index_map.find(key);
             if (it == m_index_map.end() || it->second.empty()) {
                 return end();
@@ -1175,7 +1372,6 @@ namespace cjs {
         }
 
         const_iterator find(const K& key) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = m_index_map.find(key);
             if (it == m_index_map.end() || it->second.empty()) {
                 return cend();
@@ -1184,29 +1380,24 @@ namespace cjs {
         }
 
         size_type count(const K& key) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = m_index_map.find(key);
             return (it != m_index_map.end()) ? it->second.size() : 0;
         }
 
         bool contains(const K& key) const noexcept {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = m_index_map.find(key);
             return (it != m_index_map.end()) && !it->second.empty();
         }
 
         iterator lower_bound(const K& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             return find(key);
         }
 
         const_iterator lower_bound(const K& key) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             return find(key);
         }
 
         iterator upper_bound(const K& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = m_index_map.find(key);
             if (it == m_index_map.end() || it->second.empty()) {
                 return end();
@@ -1215,7 +1406,6 @@ namespace cjs {
         }
 
         const_iterator upper_bound(const K& key) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = m_index_map.find(key);
             if (it == m_index_map.end() || it->second.empty()) {
                 return cend();
@@ -1224,53 +1414,57 @@ namespace cjs {
         }
 
         std::pair<iterator, iterator> equal_range(const K& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             return { lower_bound(key), upper_bound(key) };
         }
 
         std::pair<const_iterator, const_iterator> equal_range(const K& key) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             return { lower_bound(key), upper_bound(key) };
         }
 
         iterator insert(const value_type& pair) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             size_type new_idx = m_data.size();
             m_data.push_back(pair);
-            m_index_map[pair.first].push_back(new_idx);
+            try {
+                m_index_map[pair.first].push_back(new_idx);
+            }
+            catch (...) {
+                m_data.pop_back();
+                throw;
+            }
             return m_data.begin() + new_idx;
         }
 
         iterator insert(value_type&& pair) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             size_type new_idx = m_data.size();
             m_data.push_back(std::move(pair));
-            m_index_map[m_data.back().first].push_back(new_idx);
+            try {
+                m_index_map[m_data.back().first].push_back(new_idx);
+            }
+            catch (...) {
+                m_data.pop_back();
+                throw;
+            }
             return m_data.begin() + new_idx;
         }
 
         iterator insert(const_iterator hint, const value_type& pair) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             (void)hint;
             return insert(pair);
         }
 
         iterator insert(const_iterator hint, value_type&& pair) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             (void)hint;
             return insert(std::move(pair));
         }
 
         template <typename InputIt>
         void insert(InputIt first, InputIt last) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             for (; first != last; ++first) {
                 insert(*first);
             }
         }
 
         void insert(std::initializer_list<value_type> init) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             for (const auto& p : init) {
                 insert(p);
             }
@@ -1278,22 +1472,25 @@ namespace cjs {
 
         template <typename... Args>
         iterator emplace(Args&&... args) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             size_type new_idx = m_data.size();
             m_data.emplace_back(std::forward<Args>(args)...);
-            m_index_map[m_data.back().first].push_back(new_idx);
+            try {
+                m_index_map[m_data.back().first].push_back(new_idx);
+            }
+            catch (...) {
+                m_data.pop_back();
+                throw;
+            }
             return m_data.begin() + new_idx;
         }
 
         template <typename... Args>
         iterator emplace_hint(const_iterator hint, Args&&... args) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             (void)hint;
             return emplace(std::forward<Args>(args)...);
         }
 
         size_type erase(const K& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             auto it = m_index_map.find(key);
             if (it == m_index_map.end() || it->second.empty()) {
                 return 0;
@@ -1303,11 +1500,10 @@ namespace cjs {
             std::sort(indices.rbegin(), indices.rend());
 
             size_type erase_count = indices.size();
+            m_index_map.erase(it);
             for (size_type idx : indices) {
                 m_data.erase(m_data.begin() + idx);
             }
-
-            m_index_map.erase(it);
 
             for (auto& [k, idx_list] : m_index_map) {
                 for (size_t& i : idx_list) {
@@ -1323,7 +1519,6 @@ namespace cjs {
         }
 
         iterator erase(iterator pos) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             if (pos == end()) {
                 return end();
             }
@@ -1345,10 +1540,9 @@ namespace cjs {
 
             iterator ret = m_data.erase(pos);
 
-            size_type erased_idx = idx;
             for (auto& [k, idx_list] : m_index_map) {
                 for (size_t& i : idx_list) {
-                    if (i > erased_idx) {
+                    if (i > idx) {
                         --i;
                     }
                 }
@@ -1358,12 +1552,10 @@ namespace cjs {
         }
 
         iterator erase(const_iterator pos) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             return erase(begin() + std::distance(cbegin(), pos));
         }
 
         iterator erase(iterator first, iterator last) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             if (first == last) {
                 return last;
             }
@@ -1412,14 +1604,12 @@ namespace cjs {
 
         void swap(ordered_multimap& other) noexcept {
             if (this != &other) {
-                std::scoped_lock lock(m_mutex, other.m_mutex);
                 m_data.swap(other.m_data);
                 m_index_map.swap(other.m_index_map);
             }
         }
 
         void clear() noexcept {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
             m_data.clear();
             m_index_map.clear();
         }
@@ -1429,27 +1619,20 @@ namespace cjs {
         }
 
         friend bool operator==(const ordered_multimap& lhs, const ordered_multimap& rhs) {
-            std::scoped_lock lock(lhs.m_mutex, rhs.m_mutex);
             return lhs.m_data == rhs.m_data;
         }
-
         friend bool operator!=(const ordered_multimap& lhs, const ordered_multimap& rhs) {
             return !(lhs == rhs);
         }
-
         friend bool operator<(const ordered_multimap& lhs, const ordered_multimap& rhs) {
-            std::scoped_lock lock(lhs.m_mutex, rhs.m_mutex);
             return lhs.m_data < rhs.m_data;
         }
-
         friend bool operator<=(const ordered_multimap& lhs, const ordered_multimap& rhs) {
             return !(rhs < lhs);
         }
-
         friend bool operator>(const ordered_multimap& lhs, const ordered_multimap& rhs) {
             return rhs < lhs;
         }
-
         friend bool operator>=(const ordered_multimap& lhs, const ordered_multimap& rhs) {
             return !(lhs < rhs);
         }
@@ -1461,626 +1644,6 @@ namespace cjs {
     using GMT = ordered_map<std::wstring, std::wstring>;
     using GMMT = ordered_multimap<std::wstring, std::wstring>;
     typedef std::vector<unsigned char> BYTEBUFFER, * BYTEBUFFER_PTR;
-
-    template <typename Key,
-        typename Value,
-        typename Hash = std::hash<Key>,
-        typename KeyEqual = std::equal_to<Key>,
-        typename Allocator = std::allocator<std::pair<const Key, Value>>>
-    class unordered_map_lock {
-    private:
-        using map_type = std::unordered_map<Key, Value, Hash, KeyEqual, Allocator>;
-        map_type m_map;
-        mutable RecursiveMutex m_mutex;
-
-    public:
-
-        using key_type = Key;
-        using mapped_type = Value;
-        using value_type = std::pair<const Key, Value>;
-        using size_type = typename map_type::size_type;
-        using difference_type = typename map_type::difference_type;
-        using hasher = Hash;
-        using key_equal = KeyEqual;
-        using allocator_type = Allocator;
-        using reference = value_type&;
-        using const_reference = const value_type&;
-        using pointer = typename std::allocator_traits<Allocator>::pointer;
-        using const_pointer = typename std::allocator_traits<Allocator>::const_pointer;
-        using iterator = typename map_type::iterator;
-        using const_iterator = typename map_type::const_iterator;
-        using local_iterator = typename map_type::local_iterator;
-        using const_local_iterator = typename map_type::const_local_iterator;
-
-
-        unordered_map_lock() = default;
-        explicit unordered_map_lock(size_type n) : m_map(n) {}
-        unordered_map_lock(size_type n, const hasher& hf) : m_map(n, hf) {}
-        unordered_map_lock(size_type n, const hasher& hf, const key_equal& eql) : m_map(n, hf, eql) {}
-
-        template <typename InputIt>
-        unordered_map_lock(InputIt first, InputIt last) : m_map(first, last) {}
-        template <typename InputIt>
-        unordered_map_lock(InputIt first, InputIt last, size_type n) : m_map(first, last, n) {}
-        template <typename InputIt>
-        unordered_map_lock(InputIt first, InputIt last, size_type n, const hasher& hf) : m_map(first, last, n, hf) {}
-        template <typename InputIt>
-        unordered_map_lock(InputIt first, InputIt last, size_type n, const hasher& hf, const key_equal& eql) : m_map(first, last, n, hf, eql) {}
-
-        unordered_map_lock(std::initializer_list<value_type> init) : m_map(init) {}
-
-
-        unordered_map_lock(const unordered_map_lock& other) {
-            std::lock_guard<decltype(other.m_mutex)> lock(other.m_mutex);
-            m_map = other.m_map;
-        }
-
-
-        unordered_map_lock(unordered_map_lock&& other) noexcept {
-            std::lock_guard<decltype(other.m_mutex)> lock(other.m_mutex);
-            m_map = std::move(other.m_map);
-        }
-
-
-        ~unordered_map_lock() = default;
-
-
-        unordered_map_lock& operator=(const unordered_map_lock& other) {
-            if (this != &other) {
-                std::scoped_lock lock(m_mutex, other.m_mutex);
-                m_map = other.m_map;
-            }
-            return *this;
-        }
-
-        unordered_map_lock& operator=(unordered_map_lock&& other) noexcept {
-            if (this != &other) {
-                std::scoped_lock lock(m_mutex, other.m_mutex);
-                m_map = std::move(other.m_map);
-            }
-            return *this;
-        }
-
-        unordered_map_lock& operator=(std::initializer_list<value_type> init) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            m_map = init;
-            return *this;
-        }
-
-
-        void lock() const { m_mutex.lock(); }
-        void unlock() const { m_mutex.unlock(); }
-        bool try_lock() const { return m_mutex.try_lock(); }
-
-
-        mapped_type& operator[](const key_type& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map[key];
-        }
-        mapped_type& operator[](key_type&& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map[std::move(key)];
-        }
-
-        mapped_type& at(const key_type& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.at(key);
-        }
-        const mapped_type& at(const key_type& key) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.at(key);
-        }
-
-
-        bool empty() const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.empty();
-        }
-        size_type size() const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.size();
-        }
-        size_type max_size() const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.max_size();
-        }
-
-
-        void clear() noexcept {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            m_map.clear();
-        }
-
-        std::pair<iterator, bool> insert(const value_type& value) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.insert(value);
-        }
-        std::pair<iterator, bool> insert(value_type&& value) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.insert(std::move(value));
-        }
-        iterator insert(const_iterator hint, const value_type& value) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.insert(hint, value);
-        }
-        iterator insert(const_iterator hint, value_type&& value) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.insert(hint, std::move(value));
-        }
-
-        template <typename InputIt>
-        void insert(InputIt first, InputIt last) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            m_map.insert(first, last);
-        }
-        void insert(std::initializer_list<value_type> init) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            m_map.insert(init);
-        }
-
-        template <typename... Args>
-        std::pair<iterator, bool> emplace(Args&&... args) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.emplace(std::forward<Args>(args)...);
-        }
-        template <typename... Args>
-        iterator emplace_hint(const_iterator hint, Args&&... args) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.emplace_hint(hint, std::forward<Args>(args)...);
-        }
-
-        size_type erase(const key_type& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.erase(key);
-        }
-        iterator erase(iterator pos) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.erase(pos);
-        }
-        iterator erase(const_iterator pos) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.erase(pos);
-        }
-        iterator erase(iterator first, iterator last) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.erase(first, last);
-        }
-        iterator erase(const_iterator first, const_iterator last) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.erase(first, last);
-        }
-
-        void swap(unordered_map_lock& other) {
-            if (this != &other) {
-                std::scoped_lock lock(m_mutex, other.m_mutex);
-                m_map.swap(other.m_map);
-            }
-        }
-
-
-        iterator find(const key_type& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.find(key);
-        }
-        const_iterator find(const key_type& key) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.find(key);
-        }
-
-        size_type count(const key_type& key) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.count(key);
-        }
-
-        std::pair<iterator, iterator> equal_range(const key_type& key) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.equal_range(key);
-        }
-        std::pair<const_iterator, const_iterator> equal_range(const key_type& key) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.equal_range(key);
-        }
-
-
-        hasher hash_function() const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.hash_function();
-        }
-        key_equal key_eq() const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.key_eq();
-        }
-
-
-        size_type bucket_count() const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.bucket_count();
-        }
-        size_type max_bucket_count() const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.max_bucket_count();
-        }
-        size_type bucket_size(size_type n) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.bucket_size(n);
-        }
-        size_type bucket(const key_type& key) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.bucket(key);
-        }
-
-
-        float load_factor() const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.load_factor();
-        }
-        float max_load_factor() const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            return m_map.max_load_factor();
-        }
-        void max_load_factor(float z) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            m_map.max_load_factor(z);
-        }
-
-        void rehash(size_type n) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            m_map.rehash(n);
-        }
-        void reserve(size_type n) {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            m_map.reserve(n);
-        }
-
-
-        bool find(const key_type& key, mapped_type& outValue) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            auto it = m_map.find(key);
-            if (it != m_map.end()) {
-                outValue = it->second;
-                return true;
-            }
-            return false;
-        }
-
-        std::optional<mapped_type> try_get(const key_type& key) const {
-            std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-            auto it = m_map.find(key);
-            return it != m_map.end() ? std::optional<mapped_type>(it->second) : std::nullopt;
-        }
-
-
-        map_type* getPtr() {
-            return &m_map;
-        }
-
-
-        iterator begin() noexcept { return m_map.begin(); }
-        const_iterator begin() const noexcept { return m_map.begin(); }
-        const_iterator cbegin() const noexcept { return m_map.cbegin(); }
-
-        iterator end() noexcept { return m_map.end(); }
-        const_iterator end() const noexcept { return m_map.end(); }
-        const_iterator cend() const noexcept { return m_map.cend(); }
-
-        local_iterator begin(size_type n) { return m_map.begin(n); }
-        const_local_iterator begin(size_type n) const { return m_map.begin(n); }
-        const_local_iterator cbegin(size_type n) const { return m_map.cbegin(n); }
-
-        local_iterator end(size_type n) { return m_map.end(n); }
-        const_local_iterator end(size_type n) const { return m_map.end(n); }
-        const_local_iterator cend(size_type n) const { return m_map.cend(n); }
-    };
-
-    template <typename T,
-        typename Allocator = std::allocator<T>>
-        class vector_lock {
-        private:
-            using vector_type = std::vector<T, Allocator>;
-            vector_type m_vector;
-            mutable RecursiveMutex m_mutex;
-
-        public:
-            using value_type = T;
-            using allocator_type = Allocator;
-            using size_type = typename vector_type::size_type;
-            using difference_type = typename vector_type::difference_type;
-            using reference = value_type&;
-            using const_reference = const value_type&;
-            using pointer = typename std::allocator_traits<Allocator>::pointer;
-            using const_pointer = typename std::allocator_traits<Allocator>::const_pointer;
-            using iterator = typename vector_type::iterator;
-            using const_iterator = typename vector_type::const_iterator;
-            using reverse_iterator = typename vector_type::reverse_iterator;
-            using const_reverse_iterator = typename vector_type::const_reverse_iterator;
-
-            vector_lock() = default;
-            explicit vector_lock(const Allocator& alloc) : m_vector(alloc) {}
-            explicit vector_lock(size_type count, const Allocator& alloc = Allocator{}) : m_vector(count, alloc) {}
-            vector_lock(size_type count, const T& value, const Allocator& alloc = Allocator{}) : m_vector(count, value, alloc) {}
-
-            template <typename InputIt>
-            vector_lock(InputIt first, InputIt last, const Allocator& alloc = Allocator{}) : m_vector(first, last, alloc) {}
-
-            vector_lock(const vector_lock& other) {
-                std::lock_guard<decltype(other.m_mutex)> lock(other.m_mutex);
-                m_vector = other.m_vector;
-            }
-
-            vector_lock(const vector_lock& other, const Allocator& alloc) {
-                std::lock_guard<decltype(other.m_mutex)> lock(other.m_mutex);
-                m_vector = vector_type(other.m_vector, alloc);
-            }
-
-            vector_lock(vector_lock&& other) noexcept {
-                std::lock_guard<decltype(other.m_mutex)> lock(other.m_mutex);
-                m_vector = std::move(other.m_vector);
-            }
-
-            vector_lock(vector_lock&& other, const Allocator& alloc) {
-                std::lock_guard<decltype(other.m_mutex)> lock(other.m_mutex);
-                m_vector = vector_type(std::move(other.m_vector), alloc);
-            }
-
-            vector_lock(std::initializer_list<T> init, const Allocator& alloc = Allocator{}) : m_vector(init, alloc) {}
-
-            operator std::vector<T>() const {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector;
-            }
-
-            ~vector_lock() = default;
-
-            vector_lock& operator=(const vector_lock& other) {
-                if (this != &other) {
-                    std::scoped_lock lock(m_mutex, other.m_mutex);
-                    m_vector = other.m_vector;
-                }
-                return *this;
-            }
-
-            vector_lock& operator=(vector_lock&& other) noexcept {
-                if (this != &other) {
-                    std::scoped_lock lock(m_mutex, other.m_mutex);
-                    m_vector = std::move(other.m_vector);
-                }
-                return *this;
-            }
-
-            vector_lock& operator=(std::initializer_list<T> init) {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                m_vector = init;
-                return *this;
-            }
-
-            void lock() const { m_mutex.lock(); }
-            void unlock() const { m_mutex.unlock(); }
-            bool try_lock() const { return m_mutex.try_lock(); }
-
-            iterator begin() noexcept { return m_vector.begin(); }
-            const_iterator begin() const noexcept { return m_vector.begin(); }
-            const_iterator cbegin() const noexcept { return m_vector.cbegin(); }
-
-            iterator end() noexcept { return m_vector.end(); }
-            const_iterator end() const noexcept { return m_vector.end(); }
-            const_iterator cend() const noexcept { return m_vector.cend(); }
-
-            reverse_iterator rbegin() noexcept { return m_vector.rbegin(); }
-            const_reverse_iterator rbegin() const noexcept { return m_vector.rbegin(); }
-            const_reverse_iterator crbegin() const noexcept { return m_vector.crbegin(); }
-
-            reverse_iterator rend() noexcept { return m_vector.rend(); }
-            const_reverse_iterator rend() const noexcept { return m_vector.rend(); }
-            const_reverse_iterator crend() const noexcept { return m_vector.crend(); }
-
-            bool empty() const {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector.empty();
-            }
-
-            size_type size() const {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector.size();
-            }
-
-            size_type max_size() const {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector.max_size();
-            }
-
-            void resize(size_type count) {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                m_vector.resize(count);
-            }
-
-            void resize(size_type count, const T& value) {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                m_vector.resize(count, value);
-            }
-
-            size_type capacity() const {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector.capacity();
-            }
-
-            void reserve(size_type new_cap) {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                m_vector.reserve(new_cap);
-            }
-
-            void shrink_to_fit() {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                m_vector.shrink_to_fit();
-            }
-
-            reference operator[](size_type pos) {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector[pos];
-            }
-
-            const_reference operator[](size_type pos) const {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector[pos];
-            }
-
-            reference at(size_type pos) {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector.at(pos);
-            }
-
-            const_reference at(size_type pos) const {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector.at(pos);
-            }
-
-            reference front() {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector.front();
-            }
-
-            const_reference front() const {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector.front();
-            }
-
-            reference back() {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector.back();
-            }
-
-            const_reference back() const {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector.back();
-            }
-
-            T* data() noexcept {
-                return m_vector.data();
-            }
-
-            const T* data() const noexcept {
-                return m_vector.data();
-            }
-
-            void assign(size_type count, const T& value) {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                m_vector.assign(count, value);
-            }
-
-            template <typename InputIt>
-            void assign(InputIt first, InputIt last) {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                m_vector.assign(first, last);
-            }
-
-            void assign(std::initializer_list<T> init) {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                m_vector.assign(init);
-            }
-
-            void push_back(const T& value) {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                m_vector.push_back(value);
-            }
-
-            void push_back(T&& value) {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                m_vector.push_back(std::move(value));
-            }
-
-            template <typename... Args>
-            reference emplace_back(Args&&... args) {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector.emplace_back(std::forward<Args>(args)...);
-            }
-
-            void pop_back() {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                m_vector.pop_back();
-            }
-
-            iterator insert(const_iterator pos, const T& value) {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector.insert(pos, value);
-            }
-
-            iterator insert(const_iterator pos, T&& value) {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector.insert(pos, std::move(value));
-            }
-
-            iterator insert(const_iterator pos, size_type count, const T& value) {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector.insert(pos, count, value);
-            }
-
-            template <typename InputIt>
-            iterator insert(const_iterator pos, InputIt first, InputIt last) {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector.insert(pos, first, last);
-            }
-
-            iterator insert(const_iterator pos, std::initializer_list<T> init) {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector.insert(pos, init);
-            }
-
-            template <typename... Args>
-            iterator emplace(const_iterator pos, Args&&... args) {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector.emplace(pos, std::forward<Args>(args)...);
-            }
-
-            iterator erase(const_iterator pos) {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector.erase(pos);
-            }
-
-            iterator erase(const_iterator first, const_iterator last) {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                return m_vector.erase(first, last);
-            }
-
-            void swap(vector_lock& other) {
-                if (this != &other) {
-                    std::scoped_lock lock(m_mutex, other.m_mutex);
-                    m_vector.swap(other.m_vector);
-                }
-            }
-
-            void clear() noexcept {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                m_vector.clear();
-            }
-
-            bool get_at(size_type pos, T& outValue) const {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                if (pos >= m_vector.size()) {
-                    return false;
-                }
-                outValue = m_vector[pos];
-                return true;
-            }
-
-            std::optional<T> try_get(size_type pos) const {
-                std::lock_guard<decltype(m_mutex)> lock(m_mutex);
-                if (pos >= m_vector.size()) {
-                    return std::nullopt;
-                }
-                return m_vector[pos];
-            }
-
-            vector_type* getPtr() {
-                return &m_vector;
-            }
-
-            const vector_type* getPtr() const {
-                return &m_vector;
-            }
-    };
-    template <typename T, typename Alloc>
-    void swap(vector_lock<T, Alloc>& lhs, vector_lock<T, Alloc>& rhs) {
-        lhs.swap(rhs);
-    }
 
     struct OBJECTStruct;
     using OBJECT = ordered_map<std::wstring, OBJECTStruct>;
@@ -3022,8 +2585,6 @@ namespace cjs {
     GMMT outputTemp = {};
     bool isPaused = false;
 
-    bool isKeepWTMode = false;
-
     bool isStartByFastCgi = false;
 
     double timeout = 0.0;
@@ -3040,6 +2601,8 @@ namespace cjs {
     bool isTotalOutput = false;
 
     bool isModuleMode = false;
+
+
 
     void updateConfig() {
 
@@ -3208,6 +2771,28 @@ namespace cjs {
         return colorMap;
     }
 
+    std::wstring ReplaceWithin(std::wstring s)
+    {
+        std::wstring out;
+        out.reserve(s.size() * 2);
+        for (wchar_t ch : s)
+        {
+            if (ch == L'\\')
+            {
+                out += L'/';
+            }
+            else if (ch == L'\'')
+            {
+                out += L"\\'";
+            }
+            else
+            {
+                out += ch;
+            }
+        }
+        return out;
+    }
+
     std::wstring GetCmdLine() {
         return GetCommandLineW();
     }
@@ -3219,28 +2804,67 @@ namespace cjs {
 
         if (!argv) return arg_map;
 
+        bool stop_parse = false;
         for (int i = 1; i < argc; ++i) {
             const wchar_t* arg_ptr = argv[i];
             if (!arg_ptr || !*arg_ptr) continue;
 
-            if (arg_ptr[0] != L'-') continue;
+            if (stop_parse)
+                continue;
 
-            size_t key_start = (arg_ptr[1] == L'-') ? 2 : 1;
+            if (wcscmp(arg_ptr, L"--") == 0) {
+                stop_parse = true;
+                continue;
+            }
+
+            wchar_t lead = arg_ptr[0];
+            if (lead != L'-' && lead != L'/')
+                continue;
+
+            size_t key_start;
+            wchar_t sep;
+            if (lead == L'-' && arg_ptr[1] == L'-') {
+                key_start = 2;
+                sep = L'=';
+            }
+            else if (lead == L'-') {
+                key_start = 1;
+                sep = L'=';
+            }
+            else {
+                key_start = 1;
+                sep = L':';
+            }
+
             const wchar_t* kv_ptr = arg_ptr + key_start;
             if (!kv_ptr || !*kv_ptr) continue;
 
-            const wchar_t* equal_ptr = wcschr(kv_ptr, L'=');
+            const wchar_t* sep_ptr = wcschr(kv_ptr, sep);
             std::wstring key, value;
-            if (equal_ptr) {
-                key = std::wstring(kv_ptr, equal_ptr - kv_ptr);
-                value = equal_ptr + 1;
+            bool consume_next = false;
+
+            if (sep_ptr) {
+                key = std::wstring(kv_ptr, sep_ptr - kv_ptr);
+                value = sep_ptr + 1;
             }
             else {
                 key = kv_ptr;
                 value = L"";
+                if (i + 1 < argc) {
+                    const wchar_t* next = argv[i + 1];
+                    if (*next != L'-' && *next != L'/') {
+                        value = next;
+                        consume_next = true;
+                    }
+                }
             }
 
-            if (!key.empty()) arg_map.insert({ key, value });
+            if (!key.empty()) {
+                arg_map.insert({ key, value });
+            }
+
+            if (consume_next)
+                ++i;
         }
 
         LocalFree(argv);
@@ -3275,48 +2899,38 @@ namespace cjs {
 
     void AdvSleep(double timeout);
 
-    int CreateConsole(std::wstring title = L"console") {
-        isConsoleEnv = true;
-
-        const wchar_t* szWTRegPath = L"Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\wt.exe";
-        HKEY hKey = nullptr;
-        LONG lResult = RegOpenKeyExW(
-            HKEY_CURRENT_USER,
-            szWTRegPath,
-            0,
-            KEY_READ | KEY_WOW64_64KEY,
-            &hKey
-        );
-        if (hKey != nullptr) {
-            RegCloseKey(hKey);
-        }
-        if (!isKeepWTMode) isWTConsole = lResult == ERROR_SUCCESS;
-
-        BOOL bAttachSuccess = AttachConsole(ATTACH_PARENT_PROCESS);
-        if (bAttachSuccess) {
-
-            SetConsoleTitleW(title.c_str());
+    int CreateConsole(std::wstring title = L"console", bool isNative = false) {
+        auto flush = [&]() {
+            isConsoleEnv = true;
             FILE* fp = nullptr;
             freopen_s(&fp, "CONOUT$", "w", stdout);
             freopen_s(&fp, "CONIN$", "r", stdin);
-
             HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
             SetConsoleMode(hIn, ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
-
             HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
             DWORD outMode = 0;
             GetConsoleMode(hOut, &outMode);
-            SetConsoleMode(hOut, outMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
-
+            if (!(outMode & ENABLE_VIRTUAL_TERMINAL_PROCESSING)) {
+                SetConsoleMode(hOut, outMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+                GetConsoleMode(hOut, &outMode);
+            }
+            if ((outMode & ENABLE_VIRTUAL_TERMINAL_PROCESSING) && !isConsoleAnsiSupportedLocked) {
+                isConsoleAnsiSupported = true;
+            }
             setlocale(LC_ALL, "");
             std::ios::sync_with_stdio(true);
             std::wcout.imbue(std::locale(""));
             std::wcin.imbue(std::locale(""));
+            SetConsoleTitleW(title.c_str());
             console = GetConsoleWindow();
+            ClearOutput();
+            };
+        BOOL bAttachSuccess = AttachConsole(ATTACH_PARENT_PROCESS);
+        if (bAttachSuccess) {
+            flush();
             return 2;
         }
-
-        if (isWTConsole) {
+        if (!isNative) {
             STARTUPINFOW si = { 0 };
             PROCESS_INFORMATION pi = { 0 };
             si.cb = sizeof(STARTUPINFOW);
@@ -3367,7 +2981,6 @@ namespace cjs {
                         }
                         FreeConsole();
                     }
-
                     AdvSleep(detectInterval);
                 }
 
@@ -3394,24 +3007,7 @@ namespace cjs {
             console = GetConsoleWindow();
         }
 
-        FILE* fp = nullptr;
-        freopen_s(&fp, "CONOUT$", "w", stdout);
-        freopen_s(&fp, "CONIN$", "r", stdin);
-
-        HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
-        SetConsoleMode(hIn, ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
-
-        HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-        DWORD outMode = 0;
-        GetConsoleMode(hOut, &outMode);
-        SetConsoleMode(hOut, outMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
-
-        setlocale(LC_ALL, "");
-        std::ios::sync_with_stdio(true);
-        std::wcout.imbue(std::locale(""));
-        std::wcin.imbue(std::locale(""));
-        console = GetConsoleWindow();
-        ClearOutput();
+        flush();
         return 1;
     }
 
@@ -3431,7 +3027,7 @@ namespace cjs {
         FreeConsole();
 
         isConsoleEnv = false;
-        if (!isKeepWTMode) isWTConsole = false;
+        if (!isConsoleAnsiSupportedLocked) isConsoleAnsiSupported = false;
 
         HWND checkConsole = GetConsoleWindow();
         if (checkConsole != NULL) {
@@ -3600,7 +3196,7 @@ namespace cjs {
             outputTemp[outputData] = fgColor;
             return;
         }
-        if (isWTConsole) {
+        if (isConsoleAnsiSupported) {
             RGBColor fg = { 204,204,204 }, bg = { 12,12,12 };
             if (fgColor.size() == 7 && fgColor[0] == L'#') {
                 wchar_t* end = nullptr;
@@ -3657,37 +3253,48 @@ namespace cjs {
         if (!isConsoleEnv) return L"";
         HANDLE hStdIn = GetStdHandle(STD_INPUT_HANDLE);
         HANDLE hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
+        if (hStdIn == INVALID_HANDLE_VALUE) return L"";
         DWORD dwOriginalInMode = 0;
-        GetConsoleMode(hStdIn, &dwOriginalInMode);
-
+        if (!GetConsoleMode(hStdIn, &dwOriginalInMode)) return L"";
         DWORD dwNewMode = ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT;
-        if (!isHidden) { dwNewMode |= ENABLE_ECHO_INPUT; }
-        SetConsoleMode(hStdIn, dwNewMode);
-
+        if (!isHidden) {
+            dwNewMode |= ENABLE_ECHO_INPUT;
+        }
+        if (!SetConsoleMode(hStdIn, dwNewMode)) {
+            SetConsoleMode(hStdIn, dwOriginalInMode);
+            return L"";
+        }
         std::wstring totalInput;
         const DWORD BUFFER_SIZE = 1024;
-
         while (true) {
-            if (isQuit.load(std::memory_order_acquire)) { break; }
-
+            if (isQuit.load(std::memory_order_acquire)) {
+                break;
+            }
             std::wstring currentLine;
             WCHAR buffer[BUFFER_SIZE] = { 0 };
             DWORD dwRead = 0;
-
             DWORD dwAvail = 0;
-            if (!GetNumberOfConsoleInputEvents(hStdIn, &dwAvail)) { break; }
-            if (dwAvail == 0) { continue; }
-
+            if (!GetNumberOfConsoleInputEvents(hStdIn, &dwAvail)) {
+                break;
+            }
+            if (dwAvail == 0) {
+                continue;
+            }
             ZeroMemory(buffer, sizeof(buffer));
-            if (!ReadConsoleW(hStdIn, buffer, BUFFER_SIZE - 1, &dwRead, nullptr)) { break; }
+            if (!ReadConsoleW(hStdIn, buffer, BUFFER_SIZE - 1, &dwRead, nullptr)) {
+                break;
+            }
             currentLine.append(buffer, dwRead);
-
-            if (isQuit.load(std::memory_order_acquire)) { break; }
-
+            if (isQuit.load(std::memory_order_acquire)) {
+                break;
+            }
             if (currentLine.find(L'\r') != std::wstring::npos || currentLine.find(L'\n') != std::wstring::npos) {
                 if (((GetKeyState(VK_SHIFT) & 0x8000) == 0)) {
                     size_t lastPos = currentLine.find_last_of(L"\r\n");
-                    while (lastPos != std::wstring::npos) { currentLine.erase(lastPos, 1); lastPos = currentLine.find_last_of(L"\r\n"); }
+                    while (lastPos != std::wstring::npos) {
+                        currentLine.erase(lastPos, 1);
+                        lastPos = currentLine.find_last_of(L"\r\n");
+                    }
                     totalInput += currentLine;
                     break;
                 }
@@ -3698,11 +3305,13 @@ namespace cjs {
             }
             totalInput += currentLine;
         }
-
         SetConsoleMode(hStdIn, dwOriginalInMode);
-
-        if (isQuit.load(std::memory_order_acquire)) { return L""; }
-        if (totalInput.empty()) { totalInput = defaultValue; }
+        if (isQuit.load(std::memory_order_acquire)) {
+            return L"";
+        }
+        if (totalInput.empty()) {
+            totalInput = defaultValue;
+        }
         return totalInput;
     }
 
@@ -6840,7 +6449,17 @@ namespace cjs {
         std::wstring errorFront = L"";
         std::vector<std::wstring> errorStack = {};
     };
-    JSINFO EvalInstance(JavaScript* instance, const std::wstring& code, const std::wstring& fileName);
+    struct OpaqueData {
+        bool isValid = false;
+        std::wstring cmdLine = L"";
+        OBJECT cmdLineArgs = {};
+        std::wstring scriptPath = L"";
+        std::wstring preEval = L"";
+        int arg_eval_flag = 0;
+    };
+
+    JSINFO EvalInstance(JavaScript* instance, const std::wstring& code, const std::wstring& fileName, bool isHookOutput = false, OpaqueData data = {});
+    JSINFO GetInfo(JavaScript* instance, JSV result, const OpaqueData& data = {});
     void ApplyExtension(JavaScript* instance) {
         if (!extensionList.empty()) {
             for (auto& [name, path] : extensionList) {
@@ -7609,11 +7228,6 @@ namespace cjs {
         void* shared;
     };
 
-    enum PromiseState : int {
-        PENDING = 0,
-        FULFILLED = 1,
-        REJECTED = 2,
-    };
     struct Promise {
         Promise& operator=(const Promise& other) {
             if (this == &other || *this == other) return *this;
@@ -7635,26 +7249,6 @@ namespace cjs {
         std::function<void(JSContext* ctx, JSV arg)> Resolve = nullptr;
         std::function<void(JSContext* ctx, JSV arg)> Reject = nullptr;
     };
-    struct PromiseCallback {
-        JSV onFulfilled;
-        JSV onRejected;
-        JSV onFinally;
-        Promise returnPromise;
-        bool isFinally;
-    };
-    struct PromiseData {
-        bool isValid = false;
-        bool isChanged = false;
-        bool isProcessedSelf = false;
-        int state = PromiseState::PENDING;
-        ULL callbackId = 0;
-        JSV promise = {};
-        JSV resolve = {};
-        JSV reject = {};
-        vector_lock<JSV> result = {};
-        vector_lock<JSV> error = {};
-        vector_lock<PromiseCallback> callbacks;
-    };
 
     struct CJSHeapData {
         void* data = nullptr;
@@ -7664,10 +7258,12 @@ namespace cjs {
 
     struct JSMData {
 
-        bool isQuit = false;
-        bool isAutoLoadModules = false;
+        Atomic<bool> isQuit = false;
+        Atomic<bool> isNeedBreak = false;
+        Atomic<bool> isNeedBreakTask = false;
+        Atomic<bool> isAutoLoadModules = false;
 
-        bool isMessageLoopRunning = false;
+        Atomic<bool> isMessageLoopRunning = false;
 
         JSRuntime* rt = nullptr;
         JSContext* ctx = nullptr;
@@ -7677,69 +7273,82 @@ namespace cjs {
         JavaScript* js = nullptr;
         JavaScriptMethod* jsm = nullptr;
 
-        vector_lock<JSV> releaseList = {};
-        unordered_map_lock<ULL, FileController*> fileControllerList = {};
-        unordered_map_lock<ULL, JavaScript*> executeJsList = {};
-        unordered_map_lock<ULL, FORMDATA> formDataList = {};
-        unordered_map_lock<ULL, XMLHttpRequest*> networkHttpList = {};
+        SharedMutex fileControllerList_mtx = {};
+        std::unordered_map<ULL, FileController*> fileControllerList = {};
+        SharedMutex executeJsList_mtx = {};
+        std::unordered_map<ULL, JavaScript*> executeJsList = {};
+        SharedMutex formDataList_mtx = {};
+        std::unordered_map<ULL, FORMDATA> formDataList = {};
+        SharedMutex networkHttpList_mtx = {};
+        std::unordered_map<ULL, XMLHttpRequest*> networkHttpList = {};
 
-        bool isUpdating = false;
-        unordered_map_lock<ULL, ThreadData> timeoutList = {};
-        vector_lock<Thread> threadList = {};
+        Atomic<bool> isUpdating = false;
+        SharedMutex timeoutList_mtx = {};
+        std::unordered_map<ULL, ThreadData> timeoutList = {};
+        SharedMutex threadList_mtx = {};
+        std::vector<Thread> threadList = {};
 
-        bool isRunningTask = false;
-        unordered_map_lock<ULL, Task> taskList = {};
-        unordered_map_lock<ULL, TaskData> runnedTaskList = {};
+        Atomic<bool> isRunningTask = false;
+        SharedMutex taskList_mtx = {};
+        std::flat_map<ULL, Task> taskList = {};
+        SharedMutex runnedTaskList_mtx = {};
+        std::flat_map<ULL, TaskData> runnedTaskList = {};
 
-        vector_lock<HMODULE> hModuleList = {};
-        unordered_map_lock<ULL, JSV> hModuleCJSValueList = {};
+        SharedMutex hModuleList_mtx = {};
+        std::vector<HMODULE> hModuleList = {};
+        SharedMutex hModuleCJSValueList_mtx = {};
+        std::unordered_map<ULL, JSV> hModuleCJSValueList = {};
 
-        unordered_map_lock<ULL, CJSArgumentPackage> argumentPackageList = {};
-        unordered_map_lock<ULL, CJSHeapData> cjsByteDataList = {};
+        SharedMutex argumentPackageList_mtx = {};
+        std::unordered_map<ULL, CJSArgumentPackage> argumentPackageList = {};
+        SharedMutex cjsByteDataList_mtx = {};
+        std::unordered_map<ULL, CJSHeapData> cjsByteDataList = {};
 
     };
-    static unordered_map_lock<JSContext*, JSMData> jsinfo = {};
+
+    static SharedMutex jsinfo_mtx = {};
+    static std::unordered_map<JSContext*, JSMData> jsinfo = {};
     bool GetData(JSContext* ctx, JSMData* jsmd) {
         if (ctx == nullptr || jsmd == nullptr) return false;
-        jsinfo.lock();
+        jsinfo_mtx.lock_shared();
         auto it = jsinfo.find(ctx);
         if (it != jsinfo.end()) {
             *jsmd = it->second;
-            jsinfo.unlock();
+            jsinfo_mtx.unlock_shared();
             return true;
         }
-        jsinfo.unlock();
+        jsinfo_mtx.unlock_shared();
         return false;
     }
     bool RemoveData(JSContext* ctx) {
         if (ctx == nullptr) return false;
-        jsinfo.lock();
+        jsinfo_mtx.lock();
         auto it = jsinfo.find(ctx);
         if (it != jsinfo.end()) {
             jsinfo.erase(it);
-            jsinfo.unlock();
+            jsinfo_mtx.unlock();
             return true;
         }
-        jsinfo.unlock();
+        jsinfo_mtx.unlock();
         return false;
     }
     bool SetData(JSContext* ctx, JSMData* jsmd) {
         if (ctx == nullptr || jsmd == nullptr) return false;
-        jsinfo.lock();
+        jsinfo_mtx.lock();
         jsinfo[ctx] = *jsmd;
-        jsinfo.unlock();
+        jsinfo_mtx.unlock();
         return true;
     }
     bool GetData(JSContext* ctx, JSMData** jsmd) {
         if (ctx == nullptr || jsmd == nullptr) return false;
-        jsinfo.lock();
+        jsinfo_mtx.lock_shared();
         auto it = jsinfo.find(ctx);
         if (it != jsinfo.end()) {
             *jsmd = &(it->second);
-            jsinfo.unlock();
+            jsinfo_mtx.unlock_shared();
             return true;
         }
-        jsinfo.unlock();
+        jsinfo_mtx.unlock_shared();
         return false;
     }
     bool RemoveSameJSValue(JSContext* ctx, std::vector<JSValue>& jsvLst) {
@@ -9214,12 +8823,6 @@ namespace cjs {
             delete[]((CJSString*)data.data);
         }
     }
-    struct OpaqueData {
-        bool isValid = false;
-        std::wstring cmdLine = L"";
-        OBJECT cmdLineArgs = {};
-        std::wstring scriptPath = L"";
-    };
 
     class JavaScriptMethod {
     public:
@@ -9238,6 +8841,16 @@ namespace cjs {
             }
             JSMData& jsmd = *jsmdPtr;
             JSContext* ctx = jsmd.ctx;
+
+            JS_SetInterruptHandler(jsmdPtr->rt, [](JSRuntime* rt, void* opaque) -> int {
+                JSMData* jsmdPtr = (JSMData*)opaque;
+                if (jsmdPtr->isNeedBreak) {
+                    jsmdPtr->isNeedBreak = false;
+                    jsmdPtr->isNeedBreakTask = true;
+                    return 1;
+                }
+                return 0;
+                }, jsmdPtr);
 
             JSV null = JSV(JS_NULL);
             JSV global = NewGlobalObject(ctx);
@@ -9355,6 +8968,9 @@ namespace cjs {
                     SetSymbolName(ctx, script, "Script");
                     AppendMethod(ctx, script, "include", script_include);
                     AppendMethod(ctx, script, "execute", script_execute);
+                    AppendMethod(ctx, script, "compile", script_compile);
+                    AppendMethod(ctx, script, "run", script_run);
+                    AppendMethod(ctx, script, "validate", script_validate);
                     successCount++;
                 }
 
@@ -9518,9 +9134,6 @@ namespace cjs {
                 jsmd.isAutoLoadModules = false;
             }
 
-            const static std::wstring code = LR"()";
-            EvalInstance(jsmd.js, code, L"buildIn");
-
         }
         ~JavaScriptMethod() {
 
@@ -9547,8 +9160,11 @@ namespace cjs {
                     continue;
                 }
 
+                jsmd->threadList_mtx.lock();
                 jsmd->threadList.clear();
+                jsmd->threadList_mtx.unlock();
 
+                jsmd->hModuleList_mtx.lock();
                 for (HMODULE hm : jsmd->hModuleList) {
                     if (hm != NULL) {
                         UnInitLibrary(jsmd, hm);
@@ -9556,17 +9172,23 @@ namespace cjs {
                     }
                 }
                 jsmd->hModuleList.clear();
+                jsmd->hModuleList_mtx.unlock();
 
+                jsmd->argumentPackageList_mtx.lock();
                 for (auto& [id, data] : jsmd->argumentPackageList) {
                     delete[] data.argumentValues;
                 }
                 jsmd->argumentPackageList.clear();
+                jsmd->argumentPackageList_mtx.unlock();
 
+                jsmd->cjsByteDataList_mtx.lock();
                 for (auto& [id, data] : jsmd->cjsByteDataList) {
                     FreeHeapData(data);
                 }
                 jsmd->cjsByteDataList.clear();
+                jsmd->cjsByteDataList_mtx.unlock();
 
+                jsmd->fileControllerList_mtx.lock();
                 for (auto& [id, fc] : jsmd->fileControllerList) {
                     if (fc != nullptr) {
                         delete fc;
@@ -9574,7 +9196,9 @@ namespace cjs {
                     }
                 }
                 jsmd->fileControllerList.clear();
+                jsmd->fileControllerList_mtx.unlock();
 
+                jsmd->networkHttpList_mtx.lock();
                 for (auto& [id, xhr] : jsmd->networkHttpList) {
                     if (xhr != nullptr) {
                         delete xhr;
@@ -9582,7 +9206,9 @@ namespace cjs {
                     }
                 }
                 jsmd->networkHttpList.clear();
+                jsmd->networkHttpList_mtx.unlock();
 
+                jsmd->executeJsList_mtx.lock();
                 for (auto& [id, js] : jsmd->executeJsList) {
                     if (js != nullptr) {
                         DeleteInstance(js);
@@ -9590,14 +9216,23 @@ namespace cjs {
                     }
                 }
                 jsmd->executeJsList.clear();
+                jsmd->executeJsList_mtx.unlock();
 
-
+                jsmd->hModuleCJSValueList_mtx.lock();
                 jsmd->hModuleCJSValueList.clear();
+                jsmd->hModuleCJSValueList_mtx.unlock();
+                jsmd->taskList_mtx.lock();
                 jsmd->taskList.clear();
+                jsmd->taskList_mtx.unlock();
+                jsmd->runnedTaskList_mtx.lock();
                 jsmd->runnedTaskList.clear();
+                jsmd->runnedTaskList_mtx.unlock();
+                jsmd->timeoutList_mtx.lock();
                 jsmd->timeoutList.clear();
+                jsmd->timeoutList_mtx.unlock();
+                jsmd->formDataList_mtx.lock();
                 jsmd->formDataList.clear();
-                jsmd->releaseList.clear();
+                jsmd->formDataList_mtx.unlock();
 
             }
 
@@ -9651,14 +9286,16 @@ namespace cjs {
                 return JS_EXCEPTION;
             }
 
-            ULL id = GetNewNetworkHttpId(ctx);
-
             XMLHttpRequest* xhr = NewInstance<XMLHttpRequest>();
             if (xhr == nullptr) {
                 JS_ThrowInternalError(ctx, "[network.http.open] Failed to open");
                 return JS_EXCEPTION;
             }
+
+            jsmdPtr->networkHttpList_mtx.lock();
+            ULL id = GetNewNetworkHttpId(ctx);
             jsmdPtr->networkHttpList[id] = xhr;
+            jsmdPtr->networkHttpList_mtx.unlock();
 
             JSV returnValue = NewObject(ctx);
             SetSymbolName(ctx, returnValue, "XMLHttpRequest");
@@ -10064,11 +9701,16 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, "id");
                 ULL id = 0;
-                if (!ReadJSValueAsUint64(ctx, js_id, id) || !jsmdPtr->networkHttpList.count(id)) {
+
+                jsmdPtr->networkHttpList_mtx.lock_shared();
+                auto it = jsmdPtr->networkHttpList.find(id);
+                if (!ReadJSValueAsUint64(ctx, js_id, id) || it == jsmdPtr->networkHttpList.end()) {
+                    jsmdPtr->networkHttpList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
                     return JS_EXCEPTION;
                 }
-                XMLHttpRequest* xhr = jsmdPtr->networkHttpList[id];
+                XMLHttpRequest* xhr = it->second;
+                jsmdPtr->networkHttpList_mtx.unlock_shared();
 
                 xhr->open(stringToWstring(method), stringToWstring(url), false, stringToWstring(username), stringToWstring(password));
 
@@ -10091,11 +9733,16 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, "id");
                 ULL id = 0;
-                if (!ReadJSValueAsUint64(ctx, js_id, id) || !jsmdPtr->networkHttpList.count(id)) {
+
+                jsmdPtr->networkHttpList_mtx.lock_shared();
+                auto it = jsmdPtr->networkHttpList.find(id);
+                if (!ReadJSValueAsUint64(ctx, js_id, id) || it == jsmdPtr->networkHttpList.end()) {
+                    jsmdPtr->networkHttpList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
                     return JS_EXCEPTION;
                 }
-                XMLHttpRequest* xhr = jsmdPtr->networkHttpList[id];
+                XMLHttpRequest* xhr = it->second;
+                jsmdPtr->networkHttpList_mtx.unlock_shared();
 
                 if (xhr->readyState != XHRReadyState::OPENED || xhr->isSended) {
                     JS_ThrowInternalError(ctx, "[network.http.open->send] The object's state must be OPENED");
@@ -10112,14 +9759,9 @@ namespace cjs {
                 if (argumentCount == 0) {
                     if (!isAsync) xhr->send();
                     else {
-
-                        std::thread t([=]() {
+                        AddAsyncTask(ctx, [=]() {
                             xhr->send();
                             });
-                        Thread td = std::move(t);
-                        td.detach();
-                        jsmdPtr->threadList.push_back(td);
-                        update(ctx);
                     }
                 }
                 else if (argumentCount == 1) {
@@ -10127,48 +9769,37 @@ namespace cjs {
                     if (JS_IsNull(js_body.get(0)) || JS_IsUndefined(js_body.get(0))) {
                         if (!isAsync) xhr->send();
                         else {
-
-                            std::thread t([=]() {
+                            AddAsyncTask(ctx, [=]() {
                                 xhr->send();
                                 });
-                            Thread td = std::move(t);
-                            td.detach();
-                            jsmdPtr->threadList.push_back(td);
-                            update(ctx);
                         }
                     }
                     else if (JS_IsString(js_body.get(0))) {
                         BYTEBUFFER body = ToValue(ctx, js_body);
                         if (!isAsync) xhr->send(body);
                         else {
-
-                            std::thread t([=, body = std::move(body)]() {
+                            AddAsyncTask(ctx, [=, body = std::move(body)]() {
                                 xhr->send(body);
                                 });
-                            Thread td = std::move(t);
-                            td.detach();
-                            jsmdPtr->threadList.push_back(td);
-                            update(ctx);
                         }
                     }
                     else if (GetSymbolName(ctx, js_body) == "FormData") {
                         JSV js_id = GetProperty(ctx, js_body, { {"internal"}, {"id"} });
                         ULL id = 0;
-                        if (!js_id.isValid() || !ReadJSValueAsUint64(ctx, js_id, id) || !jsmdPtr->formDataList.count(id)) {
+                        jsmdPtr->formDataList_mtx.lock_shared();
+                        auto it = jsmdPtr->formDataList.find(id);
+                        if (!js_id.isValid() || !ReadJSValueAsUint64(ctx, js_id, id) || it == jsmdPtr->formDataList.end()) {
+                            jsmdPtr->formDataList_mtx.unlock_shared();
                             JS_ThrowInternalError(ctx, "[network.http.open->send] The FormData instance is invalid");
                             return JS_EXCEPTION;
                         }
-                        FORMDATA fl = jsmdPtr->formDataList[id];
+                        FORMDATA fl = it->second;
+                        jsmdPtr->formDataList_mtx.unlock_shared();
                         if (!isAsync) xhr->send(fl);
                         else {
-
-                            std::thread t([=, fl = std::move(fl)]() {
+                            AddAsyncTask(ctx, [=, fl = std::move(fl)]() {
                                 xhr->send(fl);
                                 });
-                            Thread td = std::move(t);
-                            td.detach();
-                            jsmdPtr->threadList.push_back(td);
-                            update(ctx);
                         }
                     }
                     else if (GetSymbolName(ctx, js_body) == "Blob") {
@@ -10181,26 +9812,17 @@ namespace cjs {
 
                         if (!isAsync) xhr->send(tempBinary);
                         else {
-                            std::thread t([=, tempBinary = std::move(tempBinary)]() {
+                            AddAsyncTask(ctx, [=, tempBinary = std::move(tempBinary)]() {
                                 xhr->send(tempBinary);
                                 });
-                            Thread td = std::move(t);
-                            td.detach();
-                            jsmdPtr->threadList.push_back(td);
-                            update(ctx);
                         }
                     }
                     else if (ReadJSValueAsArrayBufferView(ctx, js_body, tempBinary)) {
                         if (!isAsync) xhr->send(tempBinary);
                         else {
-
-                            std::thread t([=, tempBinary = std::move(tempBinary)]() {
+                            AddAsyncTask(ctx, [=, tempBinary = std::move(tempBinary)]() {
                                 xhr->send(tempBinary);
                                 });
-                            Thread td = std::move(t);
-                            td.detach();
-                            jsmdPtr->threadList.push_back(td);
-                            update(ctx);
                         }
                     }
                     else {
@@ -10230,11 +9852,16 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, "id");
                 ULL id = 0;
-                if (!ReadJSValueAsUint64(ctx, js_id, id) || !jsmdPtr->networkHttpList.count(id)) {
+
+                jsmdPtr->networkHttpList_mtx.lock_shared();
+                auto it = jsmdPtr->networkHttpList.find(id);
+                if (!ReadJSValueAsUint64(ctx, js_id, id) || it == jsmdPtr->networkHttpList.end()) {
+                    jsmdPtr->networkHttpList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
                     return JS_EXCEPTION;
                 }
-                XMLHttpRequest* xhr = jsmdPtr->networkHttpList[id];
+                XMLHttpRequest* xhr = it->second;
+                jsmdPtr->networkHttpList_mtx.unlock_shared();
 
                 std::string mimeString = "";
                 if (!ReadJSValueAsString(ctx, js_mimeString, mimeString)) {
@@ -10263,11 +9890,16 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, "id");
                 ULL id = 0;
-                if (!ReadJSValueAsUint64(ctx, js_id, id) || !jsmdPtr->networkHttpList.count(id)) {
+
+                jsmdPtr->networkHttpList_mtx.lock_shared();
+                auto it = jsmdPtr->networkHttpList.find(id);
+                if (!ReadJSValueAsUint64(ctx, js_id, id) || it == jsmdPtr->networkHttpList.end()) {
+                    jsmdPtr->networkHttpList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
                     return JS_EXCEPTION;
                 }
-                XMLHttpRequest* xhr = jsmdPtr->networkHttpList[id];
+                XMLHttpRequest* xhr = it->second;
+                jsmdPtr->networkHttpList_mtx.unlock_shared();
 
                 xhr->setRequestHeader(stringToWstring(name), stringToWstring(value));
                 return JS_UNDEFINED;
@@ -10289,11 +9921,16 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, "id");
                 ULL id = 0;
-                if (!ReadJSValueAsUint64(ctx, js_id, id) || !jsmdPtr->networkHttpList.count(id)) {
+
+                jsmdPtr->networkHttpList_mtx.lock_shared();
+                auto it = jsmdPtr->networkHttpList.find(id);
+                if (!ReadJSValueAsUint64(ctx, js_id, id) || it == jsmdPtr->networkHttpList.end()) {
+                    jsmdPtr->networkHttpList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
                     return JS_EXCEPTION;
                 }
-                XMLHttpRequest* xhr = jsmdPtr->networkHttpList[id];
+                XMLHttpRequest* xhr = it->second;
+                jsmdPtr->networkHttpList_mtx.unlock_shared();
 
                 return NewString(ctx, wstringToString(xhr->getResponseHeader(stringToWstring(name)))).get(1);
                 });
@@ -10306,11 +9943,16 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, "id");
                 ULL id = 0;
-                if (!ReadJSValueAsUint64(ctx, js_id, id) || !jsmdPtr->networkHttpList.count(id)) {
+
+                jsmdPtr->networkHttpList_mtx.lock_shared();
+                auto it = jsmdPtr->networkHttpList.find(id);
+                if (!ReadJSValueAsUint64(ctx, js_id, id) || it == jsmdPtr->networkHttpList.end()) {
+                    jsmdPtr->networkHttpList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
                     return JS_EXCEPTION;
                 }
-                XMLHttpRequest* xhr = jsmdPtr->networkHttpList[id];
+                XMLHttpRequest* xhr = it->second;
+                jsmdPtr->networkHttpList_mtx.unlock_shared();
 
                 GMT responseHeader = xhr->getResponseHeaders();
                 if (responseHeader.empty()) return JS_NULL;
@@ -10336,12 +9978,18 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, "id");
                 ULL id = 0;
-                if (!ReadJSValueAsUint64(ctx, js_id, id) || !jsmdPtr->networkHttpList.count(id) || jsmdPtr->networkHttpList[id] == nullptr) {
-                    JS_ThrowInternalError(ctx, "[network.http.open->abort] This instance has been closed already");
+
+                jsmdPtr->networkHttpList_mtx.lock_shared();
+                auto it = jsmdPtr->networkHttpList.find(id);
+                if (!ReadJSValueAsUint64(ctx, js_id, id) || it == jsmdPtr->networkHttpList.end()) {
+                    jsmdPtr->networkHttpList_mtx.unlock_shared();
+                    JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
                     return JS_EXCEPTION;
                 }
+                XMLHttpRequest* xhr = it->second;
+                jsmdPtr->networkHttpList_mtx.unlock_shared();
 
-                jsmdPtr->networkHttpList[id]->abort();
+                xhr->abort();
 
                 return JS_UNDEFINED;
                 });
@@ -10359,13 +10007,21 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, "id");
                 ULL id = 0;
-                if (!ReadJSValueAsUint64(ctx, js_id, id) || !jsmdPtr->networkHttpList.count(id) || jsmdPtr->networkHttpList[id] == nullptr) {
-                    return JS_UNDEFINED;
+
+                jsmdPtr->networkHttpList_mtx.lock();
+                auto it = jsmdPtr->networkHttpList.find(id);
+                if (!ReadJSValueAsUint64(ctx, js_id, id) || it == jsmdPtr->networkHttpList.end()) {
+                    jsmdPtr->networkHttpList_mtx.unlock();
+                    JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
+                    return JS_EXCEPTION;
                 }
 
-                jsmdPtr->networkHttpList[id]->release();
-                delete jsmdPtr->networkHttpList[id];
-                jsmdPtr->networkHttpList.erase(id);
+                it->second->release();
+
+                delete it->second;
+                jsmdPtr->networkHttpList.erase(it);
+
+                jsmdPtr->networkHttpList_mtx.unlock();
 
                 return JS_UNDEFINED;
                 });
@@ -10963,48 +10619,28 @@ namespace cjs {
                     return JS_EXCEPTION;
                 }
 
-                std::thread t([=]() {
-
-                    JSV js_data = GetProperty(ctx, thisVal, { {"internal"}, {"data"} });
-                    BYTEBUFFER data = {};
-                    ReadJSValueAsArrayBuffer(ctx, js_data, data);
-
-                    promise.Resolve(ctx, NewString(ctx, GetTextFromBinarySafely(&data)));
-
-                    return;
+                JSV js_data = GetProperty(ctx, thisVal, { { "internal" },{ "data" } });
+                BYTEBUFFER data = {};
+                ReadJSValueAsArrayBuffer(ctx, js_data, data);
+                AddAsyncTask(ctx, [=, data = std::move(data)]() mutable {
+                    std::string str = GetTextFromBinarySafely(&data);
+                    AddNativeTask(ctx, [=, str = std::move(str)]() {
+                        promise.Resolve(ctx, NewString(ctx, str));
+                        });
                     });
-
-                Thread td = std::move(t);
-                jsmdPtr->threadList.push_back(td);
-                update(ctx);
-
                 return promise.promise.get(1);
                 }, 0);
             AppendMethod(ctx, blob, "arrayBuffer", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)->JSValue {
                 Promise promise = NewPromise(ctx);
-
                 JSMData* jsmdPtr = nullptr;
                 if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
                     JS_ThrowInternalError(ctx, "[native code] This context is invalid");
                     return JS_EXCEPTION;
                 }
-
-
                 JSV js_data = GetProperty(ctx, thisVal, { {"internal"}, {"data"} });
                 BYTEBUFFER data = {};
                 ReadJSValueAsArrayBuffer(ctx, js_data, data);
-
                 promise.Resolve(ctx, NewArrayBuffer(ctx, data));
-                std::thread t([=]() {
-
-
-                    return;
-                    });
-
-                Thread td = std::move(t);
-                jsmdPtr->threadList.push_back(td);
-                update(ctx);
-
                 return promise.promise.get(1);
                 }, 0);
 
@@ -11027,13 +10663,14 @@ namespace cjs {
                 return JS_UNDEFINED;
             }
 
-            if (!jsmdPtr->timeoutList.count(id)) {
+            jsmdPtr->timeoutList_mtx.lock();
+            auto it = jsmdPtr->timeoutList.find(id);
+            if (it == jsmdPtr->timeoutList.end()) {
+                jsmdPtr->timeoutList_mtx.unlock();
                 return JS_UNDEFINED;
             }
-
-            jsmdPtr->timeoutList.lock();
-            jsmdPtr->timeoutList[id].shared = (void*)0x00000001;
-            jsmdPtr->timeoutList.unlock();
+            it->second.shared = (void*)0x00000001;
+            jsmdPtr->timeoutList_mtx.unlock();
             return JS_UNDEFINED;
         }
         static JSValue global_setTimeout(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -11074,23 +10711,35 @@ namespace cjs {
 
                 ULONGLONG timeNow = GetTickCount64();
                 ULONGLONG targetTime = timeNow + milliseconds;
-                while (GetTickCount64() < targetTime && !isQuit && jsmdPtr->timeoutList[id].shared == nullptr && !jsmdPtr->isQuit) {
+
+                bool isSharedNotEmpty = false;
+                while (GetTickCount64() < targetTime && !isQuit && !jsmdPtr->isQuit) {
+                    jsmdPtr->timeoutList_mtx.lock_shared();
+                    auto it = jsmdPtr->timeoutList.find(id);
+                    if (it != jsmdPtr->timeoutList.end() && it->second.shared != nullptr) {
+                        isSharedNotEmpty = true;
+                        jsmdPtr->timeoutList_mtx.unlock_shared();
+                        break;
+                    }
+                    jsmdPtr->timeoutList_mtx.unlock_shared();
+
                     ULONGLONG remaining = targetTime - GetTickCount64();
                     AdvSleep(static_cast<double>(remaining > 1 ? 1 : remaining));
                 }
 
-                if (!isQuit && jsmdPtr->timeoutList[id].shared == nullptr && !jsmdPtr->isQuit) {
+                if (!isQuit && !isSharedNotEmpty && !jsmdPtr->isQuit) {
                     AddNativeTask(ctx, [=]() {
                         CallFunction(ctx, js_callback, NewGlobalObject(ctx), {}, true, false);
                         });
                 }
-
+                jsmdPtr->timeoutList_mtx.lock();
                 jsmdPtr->timeoutList.erase(id);
+                jsmdPtr->timeoutList_mtx.unlock();
                 }, &td);
-            jsmdPtr->timeoutList.lock();
+            jsmdPtr->timeoutList_mtx.lock();
             jsmdPtr->timeoutList[id].thread = td;
             jsmdPtr->timeoutList[id].shared = nullptr;
-            jsmdPtr->timeoutList.unlock();
+            jsmdPtr->timeoutList_mtx.unlock();
 
             return NewUint64(ctx, id).get(1);
         }
@@ -11138,13 +10787,18 @@ namespace cjs {
                     JS_ThrowTypeError(ctx, "[FormData] Failed to read the form data binary");
                     return JS_EXCEPTION;
                 }
+                jsmdPtr->formDataList_mtx.lock_shared();
                 if (!ReadBinaryAsFormData(ctx, &binary, jsmdPtr->formDataList[id])) {
+                    jsmdPtr->formDataList_mtx.unlock_shared();
                     JS_ThrowTypeError(ctx, "[FormData] Failed to parse the form data binary");
                     return JS_EXCEPTION;
                 }
+                jsmdPtr->formDataList_mtx.unlock_shared();
             }
             else {
+                jsmdPtr->formDataList_mtx.lock();
                 jsmdPtr->formDataList[id] = {};
+                jsmdPtr->formDataList_mtx.unlock();
             }
 
             JSV returnValue = NewObject(ctx);
@@ -11169,11 +10823,14 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, { {"internal"},{"id"} });
                 uint64_t uid = 0;
+                jsmdPtr->formDataList_mtx.lock_shared();
                 if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                    jsmdPtr->formDataList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[FormData->append] This instance is invalid");
                     return JS_EXCEPTION;
 
                 }
+                jsmdPtr->formDataList_mtx.unlock_shared();
                 ULL id = static_cast<ULL>(uid);
 
                 JSV vName = JSV(ctx, &argumentValues[0]).cget(1).cset(1);
@@ -11191,7 +10848,9 @@ namespace cjs {
                 fd.name = name;
                 fd.contentType = wstringToString(GetMIMETypeFromBYTEBUFFER(&value));
 
+                jsmdPtr->formDataList_mtx.lock();
                 jsmdPtr->formDataList[id][name] = fd;
+                jsmdPtr->formDataList_mtx.unlock();
 
                 return JS_UNDEFINED;
                 });
@@ -11209,11 +10868,13 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, { {"internal"},{"id"} });
                 uint64_t uid = 0;
+                jsmdPtr->formDataList_mtx.lock_shared();
                 if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                    jsmdPtr->formDataList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[FormData->set] This instance is invalid");
                     return JS_EXCEPTION;
-
                 }
+                jsmdPtr->formDataList_mtx.unlock_shared();
 
                 ULL id = static_cast<ULL>(uid);
 
@@ -11224,8 +10885,9 @@ namespace cjs {
                 std::string fileName = ToString(ctx, vFilename);
                 BYTEBUFFER value = ToValue(ctx, vValue);
 
-
+                jsmdPtr->formDataList_mtx.lock();
                 jsmdPtr->formDataList[id].erase(name);
+                jsmdPtr->formDataList_mtx.unlock();
 
                 FORMDATAITEM fd = {};
                 fd.key = vName;
@@ -11235,7 +10897,9 @@ namespace cjs {
                 fd.name = name;
                 fd.contentType = wstringToString(GetMIMETypeFromBYTEBUFFER(&value));
 
+                jsmdPtr->formDataList_mtx.lock();
                 jsmdPtr->formDataList[id][name] = fd;
+                jsmdPtr->formDataList_mtx.unlock();
 
                 return JS_UNDEFINED;
                 });
@@ -11253,18 +10917,22 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, { {"internal"},{"id"} });
                 uint64_t uid = 0;
+                jsmdPtr->formDataList_mtx.lock_shared();
                 if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                    jsmdPtr->formDataList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[FormData->delete] This instance is invalid");
                     return JS_EXCEPTION;
-
                 }
+                jsmdPtr->formDataList_mtx.unlock_shared();
 
                 ULL id = static_cast<ULL>(uid);
 
                 JSV vName = JSV(ctx, &argumentValues[0]);
                 std::string name = ToString(ctx, vName);
 
+                jsmdPtr->formDataList_mtx.lock();
                 jsmdPtr->formDataList[id].erase(name);
+                jsmdPtr->formDataList_mtx.unlock();
 
                 return JS_UNDEFINED;
                 });
@@ -11283,22 +10951,28 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, { {"internal"},{"id"} });
                 uint64_t uid = 0;
+                jsmdPtr->formDataList_mtx.lock_shared();
                 if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                    jsmdPtr->formDataList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[FormData->get] This instance is invalid");
                     return JS_EXCEPTION;
-
                 }
+                jsmdPtr->formDataList_mtx.unlock_shared();
 
                 ULL id = static_cast<ULL>(uid);
 
                 JSV vName = JSV(ctx, &argumentValues[0]);
                 std::string name = ToString(ctx, vName);
 
+                jsmdPtr->formDataList_mtx.lock_shared();
                 auto result = jsmdPtr->formDataList[id].find(name);
                 if (result != jsmdPtr->formDataList[id].end()) {
-                    return result->second.value.get(1);
+                    JSValue ret = result->second.value.get(1);
+                    jsmdPtr->formDataList_mtx.unlock_shared();
+                    return ret;
                 }
                 else {
+                    jsmdPtr->formDataList_mtx.unlock_shared();
                     return JS_NULL;
                 }
 
@@ -11318,26 +10992,32 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, { {"internal"},{"id"} });
                 uint64_t uid = 0;
+
+                jsmdPtr->formDataList_mtx.lock_shared();
                 if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                    jsmdPtr->formDataList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[FormData->getAll] This instance is invalid");
                     return JS_EXCEPTION;
-
                 }
+                jsmdPtr->formDataList_mtx.unlock_shared();
 
                 ULL id = static_cast<ULL>(uid);
 
                 JSV vName = JSV(ctx, &argumentValues[0]);
                 std::string name = ToString(ctx, vName);
 
+                jsmdPtr->formDataList_mtx.lock_shared();
                 if (!jsmdPtr->formDataList[id].empty()) {
                     std::vector<JSV> returnArray = {};
                     for (auto& [id, fl] : jsmdPtr->formDataList[id]) {
                         if (fl.name != name) continue;
                         returnArray.push_back(fl.value);
                     }
+                    jsmdPtr->formDataList_mtx.unlock_shared();
                     return NewArray(ctx, returnArray).get(1);
                 }
                 else {
+                    jsmdPtr->formDataList_mtx.unlock_shared();
                     return NewArray(ctx, {}).get(1);
                 }
 
@@ -11357,22 +11037,28 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, { {"internal"},{"id"} });
                 uint64_t uid = 0;
+
+                jsmdPtr->formDataList_mtx.lock_shared();
                 if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                    jsmdPtr->formDataList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[FormData->has] This instance is invalid");
                     return JS_EXCEPTION;
-
                 }
+                jsmdPtr->formDataList_mtx.unlock_shared();
 
                 ULL id = static_cast<ULL>(uid);
 
                 JSV vName = JSV(ctx, &argumentValues[0]);
                 std::string name = ToString(ctx, vName);
 
+                jsmdPtr->formDataList_mtx.lock_shared();
                 auto result = jsmdPtr->formDataList[id].find(name);
                 if (result != jsmdPtr->formDataList[id].end()) {
+                    jsmdPtr->formDataList_mtx.unlock_shared();
                     return NewBool(ctx, true).get(1);
                 }
                 else {
+                    jsmdPtr->formDataList_mtx.unlock_shared();
                     return NewBool(ctx, false).get(1);
                 }
 
@@ -11393,11 +11079,15 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, { {"internal"},{"id"} });
                 uint64_t uid = 0;
+
+                jsmdPtr->formDataList_mtx.lock_shared();
                 if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                    jsmdPtr->formDataList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[FormData->entries] This instance is invalid");
                     return JS_EXCEPTION;
-
                 }
+                jsmdPtr->formDataList_mtx.unlock_shared();
+
                 ULL id = static_cast<ULL>(uid);
 
                 JSV iterator = NewIterator(ctx, thisVal, "FormData Interator", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)-> JSValue {
@@ -11412,15 +11102,18 @@ namespace cjs {
 
                     JSV js_id = GetProperty(ctx, internal, "id");
                     uint64_t uid = 0;
+                    jsmdPtr->formDataList_mtx.lock_shared();
                     if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                        jsmdPtr->formDataList_mtx.unlock_shared();
                         JS_ThrowInternalError(ctx, "[FormData->entries] This instance is invalid");
                         return JS_EXCEPTION;
-
                     }
+                    jsmdPtr->formDataList_mtx.unlock_shared();
                     ULL id = static_cast<ULL>(uid);
 
                     JSV array = GetProperty(ctx, internal, "data");
                     uint64_t index = 0;
+                    jsmdPtr->formDataList_mtx.lock_shared();
                     FORMDATA& dataList = jsmdPtr->formDataList[id];
 
                     if (!ReadJSValueAsUint64(ctx, GetProperty(ctx, internal, "index"), index)) {
@@ -11436,6 +11129,8 @@ namespace cjs {
                         SetAttribute(ctx, internal, "index", NewUint64(ctx, ++index));
                     }
                     else SetAttribute(ctx, returnObject, "value", JS_UNDEFINED);
+
+                    jsmdPtr->formDataList_mtx.unlock_shared();
 
                     return returnObject.get(1);
                     }, 0);
@@ -11463,11 +11158,15 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, { {"internal"},{"id"} });
                 uint64_t uid = 0;
+
+                jsmdPtr->formDataList_mtx.lock_shared();
                 if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                    jsmdPtr->formDataList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[FormData->keys] This instance is invalid");
                     return JS_EXCEPTION;
-
                 }
+                jsmdPtr->formDataList_mtx.unlock_shared();
+
                 ULL id = static_cast<ULL>(uid);
 
                 JSV iterator = NewIterator(ctx, thisVal, "FormData Interator", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)-> JSValue {
@@ -11482,15 +11181,20 @@ namespace cjs {
 
                     JSV js_id = GetProperty(ctx, internal, "id");
                     uint64_t uid = 0;
+
+                    jsmdPtr->formDataList_mtx.lock_shared();
                     if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                        jsmdPtr->formDataList_mtx.unlock_shared();
                         JS_ThrowInternalError(ctx, "[FormData->keys] This instance is invalid");
                         return JS_EXCEPTION;
-
                     }
+                    jsmdPtr->formDataList_mtx.unlock_shared();
                     ULL id = static_cast<ULL>(uid);
 
                     JSV array = GetProperty(ctx, internal, "data");
                     uint64_t index = 0;
+
+                    jsmdPtr->formDataList_mtx.lock_shared();
                     FORMDATA& dataList = jsmdPtr->formDataList[id];
 
                     if (!ReadJSValueAsUint64(ctx, GetProperty(ctx, internal, "index"), index)) {
@@ -11506,6 +11210,8 @@ namespace cjs {
                         SetAttribute(ctx, internal, "index", NewUint64(ctx, ++index));
                     }
                     else SetAttribute(ctx, returnObject, "value", JS_UNDEFINED);
+
+                    jsmdPtr->formDataList_mtx.unlock_shared();
 
                     return returnObject.get(1);
                     }, 0);
@@ -11533,11 +11239,15 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, { {"internal"},{"id"} });
                 uint64_t uid = 0;
+
+                jsmdPtr->formDataList_mtx.lock_shared();
                 if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                    jsmdPtr->formDataList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[FormData->values] This instance is invalid");
                     return JS_EXCEPTION;
 
                 }
+                jsmdPtr->formDataList_mtx.unlock_shared();
                 ULL id = static_cast<ULL>(uid);
 
                 JSV iterator = NewIterator(ctx, thisVal, "FormData Interator", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)-> JSValue {
@@ -11552,15 +11262,20 @@ namespace cjs {
 
                     JSV js_id = GetProperty(ctx, internal, "id");
                     uint64_t uid = 0;
+
+                    jsmdPtr->formDataList_mtx.lock_shared();
                     if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                        jsmdPtr->formDataList_mtx.unlock_shared();
                         JS_ThrowInternalError(ctx, "[FormData->values] This instance is invalid");
                         return JS_EXCEPTION;
-
                     }
+                    jsmdPtr->formDataList_mtx.unlock_shared();
                     ULL id = static_cast<ULL>(uid);
 
                     JSV array = GetProperty(ctx, internal, "data");
                     uint64_t index = 0;
+
+                    jsmdPtr->formDataList_mtx.lock_shared();
                     FORMDATA& dataList = jsmdPtr->formDataList[id];
 
                     if (!ReadJSValueAsUint64(ctx, GetProperty(ctx, internal, "index"), index)) {
@@ -11576,6 +11291,8 @@ namespace cjs {
                         SetAttribute(ctx, internal, "index", NewUint64(ctx, ++index));
                     }
                     else SetAttribute(ctx, returnObject, "value", JS_UNDEFINED);
+
+                    jsmdPtr->formDataList_mtx.unlock_shared();
 
                     return returnObject.get(1);
                     }, 0);
@@ -11609,10 +11326,12 @@ namespace cjs {
 
                 JSV js_id = GetProperty(ctx, thisVal, { {"internal"},{"id"} });
                 uint64_t uid = 0;
+
+                jsmdPtr->formDataList_mtx.lock_shared();
                 if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                    jsmdPtr->formDataList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[FormData->forEach] This instance is invalid");
                     return JS_EXCEPTION;
-
                 }
                 ULL id = static_cast<ULL>(uid);
 
@@ -11623,6 +11342,7 @@ namespace cjs {
                         JSV(ctx, &thisVal).cget(1).cset(1)
                         });
                 }
+                jsmdPtr->formDataList_mtx.unlock_shared();
 
                 return JS_UNDEFINED;
                 });
@@ -11803,8 +11523,10 @@ namespace cjs {
 
             }
 
+            jsmdPtr->executeJsList_mtx.lock();
             ULL id = GetNewExecuteJsId(ctx);
             jsmdPtr->executeJsList[id] = js;
+            jsmdPtr->executeJsList_mtx.unlock();
 
             JSContext* newCtx = GetContextThis(js);
             JSMData* newJsmdPtr = nullptr;
@@ -11820,7 +11542,9 @@ namespace cjs {
 
                 SetData(newJsmd.ctx, &newJsmd);
                 if (!GetData(newCtx, &newJsmdPtr)) {
+                    jsmdPtr->executeJsList_mtx.lock();
                     jsmdPtr->executeJsList.erase(id);
+                    jsmdPtr->executeJsList_mtx.unlock();
                     DeleteInstance(js);
                     JS_ThrowInternalError(ctx, "[script.execute] Failed to init a new context");
                     return JS_EXCEPTION;
@@ -11847,6 +11571,7 @@ namespace cjs {
                     return JS_EXCEPTION;
                 }
 
+                jsmdPtr->executeJsList_mtx.lock();
                 for (auto it = parentJsmdPtr->executeJsList.begin(); it != parentJsmdPtr->executeJsList.end(); ++it) {
                     if (GetContextThis(it->second) == ctx) {
                         it = parentJsmdPtr->executeJsList.erase(it);
@@ -11856,6 +11581,7 @@ namespace cjs {
                         ++it;
                     }
                 }
+                jsmdPtr->executeJsList_mtx.unlock();
 
                 ClearObject(ctx, thisVal);
                 DeleteInstance(jsmdPtr->js);
@@ -11927,6 +11653,69 @@ namespace cjs {
             pathList.clear();
 
             return JS_UNDEFINED;
+        }
+        static JSValue script_compile(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 1) {
+                JS_ThrowTypeError(ctx, "[script.compile] Only 1 argument are supported: (js)");
+                return JS_EXCEPTION;
+            }
+
+            JSV vString = JSV(&argumentValues[0]);
+            std::string string = "";
+            if (!JS_IsString(vString.get(0)) || !ReadJSValueAsString(ctx, vString, string)) {
+                JS_ThrowTypeError(ctx, "[script.compile] The first argument must be a string");
+                return JS_EXCEPTION;
+            }
+
+            JSMData* jsmdPtr = nullptr;
+            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
+                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
+                return JS_EXCEPTION;
+            }
+
+            JSINFO ji = EvalInstance(jsmdPtr->js, stringToWstring(string), L"[script.compile]", false, {.isValid = true, .arg_eval_flag = JS_EVAL_FLAG_COMPILE_ONLY});
+            if (!ji.isValid) {
+                std::string errorMsg = std::string("[script.compile]") + ": " + wstringToString(ji.errorFront) + ":" + wstringToString(ji.message);
+                JS_ThrowInternalError(ctx, errorMsg.c_str());
+                return JS_EXCEPTION;
+            }
+            SetSymbolName(ctx, ji.result, "FunctionByteCode");
+            return ji.result.get(1);
+        }
+        static JSValue script_run(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 1) {
+                JS_ThrowTypeError(ctx, "[script.run] Only 1 argument are supported: (functionByteCode)");
+                return JS_EXCEPTION;
+            }
+            JSV byteCode = JSV(ctx, &argumentValues[0]);
+            if (JS_VALUE_GET_TAG(byteCode.get(0)) != JS_TAG_FUNCTION_BYTECODE) {
+                JS_ThrowTypeError(ctx, "[script.run] The first argument must be a FunctionByteCode");
+                return JS_EXCEPTION;
+            }
+            JSMData* jsmdPtr = nullptr;
+            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr || jsmdPtr->js == nullptr) {
+                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
+                return JS_EXCEPTION;
+            }
+            JSINFO ji = GetInfo(jsmdPtr->js, EvalFunction(ctx, byteCode));
+            if (ji.isValid && !ji.isSuccess) {
+                std::string errorMsg = std::string("[script.run]") + ": " + wstringToString(ji.errorFront) + ":" + wstringToString(ji.message);
+                JS_ThrowPlainError(ctx, errorMsg.c_str());
+                return JS_EXCEPTION;
+            }
+            else if (ji.isValid && ji.isSuccess) {
+                return ji.result.get(1);
+            }
+            return JS_UNDEFINED;
+        }
+        static JSValue script_validate(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 1) {
+                JS_ThrowTypeError(ctx, "[script.validate] Only 1 argument are supported: (functionByteCode)");
+                return JS_EXCEPTION;
+            }
+            JSV byteCode = JSV(ctx, &argumentValues[0]);
+            bool isValid = JS_VALUE_GET_TAG(byteCode.get(0)) == JS_TAG_FUNCTION_BYTECODE;
+            return NewBool(ctx, isValid).get(1);
         }
 
         static JSValue system_updateConfig(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -12032,10 +11821,9 @@ namespace cjs {
                 return JS_EXCEPTION;
             }
 
+            jsmdPtr->isNeedBreak = true;
             ChildSystemExitInstance(jsmdPtr->js);
-
-            JS_Throw(ctx, JS_NewInternalError(ctx, "[native code] Quit the context"));
-            return JS_EXCEPTION;
+            return JS_UNDEFINED;
         }
         static JSValue system_help(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             std::string help = R"(访问 'https://github.com/Aliyuan0812/CGI.JS/blob/master/docs/api-reference.md' 获取更多帮助。)";
@@ -15188,11 +14976,11 @@ namespace cjs {
             JSV js_title = (argumentCount >= 1) ? JSV(ctx, argumentValues[0]) : NewString(ctx, wstringToString(L"CGI.JS - r" + AY_CJS_CPP_VW + L""));
             std::string title = "";
             ReadJSValueAsString(ctx, js_title, title);
-            if (mode == "file" && console == NULL) CreateConsole(stringToWstring(title));
+            //if (mode == "file" && console == NULL) CreateConsole(stringToWstring(title));
             return JS_UNDEFINED;
         }
         static JSValue console_kill(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
-            if (mode == "file") CloseConsole();
+            //if (mode == "file") CloseConsole();
             return JS_UNDEFINED;
         }
         static JSValue console_hide(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -15481,6 +15269,10 @@ namespace cjs {
                     CreateOutput(L"Symbol(" + stringToWstring(to_str(v)) + L")", color(L"Symbol"));
                     return;
                 }
+                if (JS_VALUE_GET_TAG(v) == JS_TAG_FUNCTION_BYTECODE) {
+                    CreateOutput(L"FunctionByteCode()", color(L"Symbol"));
+                    return;
+                }
 
                 if (is_private(v)) return;
 
@@ -15724,7 +15516,7 @@ namespace cjs {
                             CreateOutput(indent(depth + 1) + stringToWstring(e.name) + L": ", cObject);
                         }
                         if (!JS_IsException(e.val)) self(self, e.val, depth + 1);
-                        else CreateOutput(L"[Getter]", cComment);
+                        else CreateOutput(L"[getter]", cComment);
                         JS_FreeValue(ctx, e.val);
                     }
 
@@ -16030,12 +15822,15 @@ namespace cjs {
             }
 
             JSV fileControllerObject = NewObject(ctx);
-            ULL id = GetNewFileControllerId(ctx);
-            std::string stringId = std::to_string(id);
 
+            jsmdPtr->fileControllerList_mtx.lock();
+
+            ULL id = GetNewFileControllerId(ctx);
             jsmdPtr->fileControllerList[id] = fc;
 
-            SetAttribute(ctx, fileControllerObject, "id", stringId, 0);
+            jsmdPtr->fileControllerList_mtx.unlock();
+
+            SetAttribute(ctx, fileControllerObject, "id", NewUint64(ctx, id), 0);
             SetAttribute(ctx, fileControllerObject, "mode", mode, 0);
             SetAttribute(ctx, fileControllerObject, "name", path, 0);
 
@@ -16097,15 +15892,21 @@ namespace cjs {
                     }
 
                     JSV jsId = GetProperty(ctx, vThisVal, "id");
-                    std::string sid = "";
-                    if (!ReadJSValueAsString(ctx, jsId, sid)) {
+                    uint64_t id = 0;
+                    if (!ReadJSValueAsUint64(ctx, jsId, id)) {
                     ErrorProcess:;
                         JS_ThrowTypeError(ctx, "[filesystem.open->read] This instance object is invalid");
                         return JS_EXCEPTION;
                     }
-                    ULL id = stoullSafely(stringToWstring(sid));
-                    if (!jsmdPtr->fileControllerList.count(id)) goto ErrorProcess;
-                    FileController* fc = jsmdPtr->fileControllerList[id];
+
+                    jsmdPtr->fileControllerList_mtx.lock_shared();
+                    auto it = jsmdPtr->fileControllerList.find(id);
+                    if (it == jsmdPtr->fileControllerList.end()) {
+                        jsmdPtr->fileControllerList_mtx.unlock_shared();
+                        goto ErrorProcess;
+                    }
+                    FileController* fc = it->second;
+                    jsmdPtr->fileControllerList_mtx.unlock_shared();
 
                     JSV jsSeek = GetProperty(ctx, vThisVal, "seekPtr");
                     uint64_t uSeek = 0;
@@ -16183,15 +15984,21 @@ namespace cjs {
                     }
 
                     JSV jsId = GetProperty(ctx, vThisVal, "id");
-                    std::string sid = "";
-                    if (!ReadJSValueAsString(ctx, jsId, sid)) {
+                    uint64_t id = 0;
+                    if (!ReadJSValueAsUint64(ctx, jsId, id)) {
                     ErrorProcess:;
                         JS_ThrowTypeError(ctx, "[filesystem.open->write] This instance object is invalid");
                         return JS_EXCEPTION;
                     }
-                    ULL id = stoullSafely(stringToWstring(sid));
-                    if (!jsmdPtr->fileControllerList.count(id)) goto ErrorProcess;
-                    FileController* fc = jsmdPtr->fileControllerList[id];
+
+                    jsmdPtr->fileControllerList_mtx.lock_shared();
+                    auto it = jsmdPtr->fileControllerList.find(id);
+                    if (it == jsmdPtr->fileControllerList.end()) {
+                        jsmdPtr->fileControllerList_mtx.unlock_shared();
+                        goto ErrorProcess;
+                    }
+                    FileController* fc = it->second;
+                    jsmdPtr->fileControllerList_mtx.unlock_shared();
 
                     JSV jsSeek = GetProperty(ctx, vThisVal, "seekPtr");
                     uint64_t uSeek = 0;
@@ -16245,17 +16052,24 @@ namespace cjs {
                 }
 
                 JSV jsId = GetProperty(ctx, vThisVal, "id");
-                std::string sid = "";
-                if (!ReadJSValueAsString(ctx, jsId, sid)) {
+                uint64_t id = 0;
+                if (!ReadJSValueAsUint64(ctx, jsId, id)) {
                 ErrorProcess:;
                     JS_ThrowTypeError(ctx, "[filesystem.open->read] This instance object is invalid");
                     return JS_EXCEPTION;
                 }
-                ULL id = stoullSafely(stringToWstring(sid));
-                if (!jsmdPtr->fileControllerList.count(id)) goto ErrorProcess;
 
+                jsmdPtr->fileControllerList_mtx.lock_shared();
+                auto it = jsmdPtr->fileControllerList.find(id);
+                if (it == jsmdPtr->fileControllerList.end()) {
+                    jsmdPtr->fileControllerList_mtx.unlock_shared();
+                    goto ErrorProcess;
+                }
+                jsmdPtr->fileControllerList_mtx.unlock_shared();
+                jsmdPtr->fileControllerList_mtx.lock();
                 delete jsmdPtr->fileControllerList[id];
                 jsmdPtr->fileControllerList.erase(id);
+                jsmdPtr->fileControllerList_mtx.unlock();
 
                 JSV jsClosed = NewBool(ctx, true);
                 SetAttribute(ctx, vThisVal, "closed", jsClosed, 0);
@@ -16275,16 +16089,6 @@ namespace cjs {
 
                 JSV vThisVal = JSV(&thisVal);
 
-                JSV jsId = GetProperty(ctx, vThisVal, "id");
-                std::string sid = "";
-                if (!ReadJSValueAsString(ctx, jsId, sid)) {
-                ErrorProcess:;
-                    JS_ThrowTypeError(ctx, "[filesystem.open->tell] This instance object is invalid");
-                    return JS_EXCEPTION;
-                }
-                ULL id = stoullSafely(stringToWstring(sid));
-                if (!jsmdPtr->fileControllerList.count(id)) goto ErrorProcess;
-
                 JSV jsSeek = GetProperty(ctx, vThisVal, "seekPtr");
                 return jsSeek.get(1);
                 }, -1, 0);
@@ -16303,15 +16107,21 @@ namespace cjs {
                 JSV vThisVal = JSV(&thisVal);
 
                 JSV jsId = GetProperty(ctx, vThisVal, "id");
-                std::string sid = "";
-                if (!ReadJSValueAsString(ctx, jsId, sid)) {
+                uint64_t id = 0;
+                if (!ReadJSValueAsUint64(ctx, jsId, id)) {
                 ErrorProcess:;
                     JS_ThrowTypeError(ctx, "[filesystem.open->size] This instance object is invalid");
                     return JS_EXCEPTION;
                 }
-                ULL id = stoullSafely(stringToWstring(sid));
-                if (!jsmdPtr->fileControllerList.count(id)) goto ErrorProcess;
-                FileController* fc = jsmdPtr->fileControllerList[id];
+
+                jsmdPtr->fileControllerList_mtx.lock_shared();
+                auto it = jsmdPtr->fileControllerList.find(id);
+                if (it == jsmdPtr->fileControllerList.end()) {
+                    jsmdPtr->fileControllerList_mtx.unlock_shared();
+                    goto ErrorProcess;
+                }
+                FileController* fc = it->second;
+                jsmdPtr->fileControllerList_mtx.unlock_shared();
 
                 ULL size = fc->size();
 
@@ -16355,15 +16165,21 @@ namespace cjs {
                 }
 
                 JSV jsId = GetProperty(ctx, vThisVal, "id");
-                std::string sid = "";
-                if (!ReadJSValueAsString(ctx, jsId, sid)) {
+                uint64_t id = 0;
+                if (!ReadJSValueAsUint64(ctx, jsId, id)) {
                 ErrorProcess:;
                     JS_ThrowTypeError(ctx, "[filesystem.open->seek] This instance object is invalid");
                     return JS_EXCEPTION;
                 }
-                ULL id = stoullSafely(stringToWstring(sid));
-                if (!jsmdPtr->fileControllerList.count(id)) goto ErrorProcess;
-                FileController* fc = jsmdPtr->fileControllerList[id];
+
+                jsmdPtr->fileControllerList_mtx.lock_shared();
+                auto it = jsmdPtr->fileControllerList.find(id);
+                if (it == jsmdPtr->fileControllerList.end()) {
+                    jsmdPtr->fileControllerList_mtx.unlock_shared();
+                    goto ErrorProcess;
+                }
+                FileController* fc = it->second;
+                jsmdPtr->fileControllerList_mtx.unlock_shared();
 
                 JSV jsSeek = GetProperty(ctx, vThisVal, "seekPtr");
                 uint64_t uSeek = 0;
@@ -16670,7 +16486,7 @@ namespace cjs {
             JSValue object = JS_NewObject(ctx);
             return JSV(ctx, &object).cset(1);
         }
-        static JSV NewObject(JSContext* ctx, JSV parentObject, std::string name) {
+        static JSV NewObject(JSContext* ctx, JSV parentObject, const std::string& name) {
             JSValue object = JS_NewObject(ctx);
             JSV obj = JSV(ctx, &object);
             obj.set(1);
@@ -16725,7 +16541,7 @@ namespace cjs {
             }
 
         }
-        static JSV NewObject(JSContext* ctx, OBJECT& object) {
+        static JSV NewObject(JSContext* ctx, const OBJECT& object) {
 
             JSV returnObject = NewObject(ctx);
 
@@ -18033,6 +17849,9 @@ namespace cjs {
             return binary;
         }
 
+        static JSV EvalFunction(JSContext* ctx, JSV func) {
+            return JSV(ctx, JS_EvalFunction(ctx, func.get(1))).cset(1);
+        }
         static JSV CallFunction(JSContext* ctx, JSV func, JSV thisVal, std::vector<JSV> args, bool isAsync = false, bool isWait = true) {
             std::vector<JSValue> jsArgs = {};
             jsArgs.reserve(args.size());
@@ -18299,7 +18118,7 @@ namespace cjs {
         static ULL AddTask(JSContext* ctx, JSV task, JSV thisVal, std::vector<JSV> args, JSV flags = {}) {
             JSMData* jsmdPtr = nullptr;
             if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) return 0;
-            jsmdPtr->taskList.lock();
+            jsmdPtr->taskList_mtx.lock();
             ULL id = GetNewTaskId(ctx);
             Task t = {};
             t.type = "js";
@@ -18308,30 +18127,39 @@ namespace cjs {
             t.args = args;
             t.flags = flags;
             jsmdPtr->taskList[id] = t;
-            jsmdPtr->taskList.unlock();
+            jsmdPtr->taskList_mtx.unlock();
             return id;
         }
         static ULL AddNativeTask(JSContext* ctx, std::function<void()> nativeCallback) {
             JSMData* jsmdPtr = nullptr;
             if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) return 0;
-            jsmdPtr->taskList.lock();
+            jsmdPtr->taskList_mtx.lock();
             ULL id = GetNewTaskId(ctx);
             Task t = {};
             t.type = "native";
             t.nativeCallback = nativeCallback;
             jsmdPtr->taskList[id] = t;
-            jsmdPtr->taskList.unlock();
+            jsmdPtr->taskList_mtx.unlock();
             return id;
         }
         static bool waitTask(JSContext* ctx, ULL id) {
             JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr || !jsmdPtr->taskList.count(id)) {
+            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
+                return false;
+            }
+            jsmdPtr->taskList_mtx.lock_shared();
+            bool count = jsmdPtr->taskList.count(id);
+            jsmdPtr->taskList_mtx.unlock_shared();
+            if (!count) {
                 return false;
             }
             while (!jsmdPtr->isQuit && !isQuit) {
+                jsmdPtr->runnedTaskList_mtx.lock_shared();
                 if (jsmdPtr->runnedTaskList.count(id)) {
+                    jsmdPtr->runnedTaskList_mtx.unlock_shared();
                     break;
                 }
+                jsmdPtr->runnedTaskList_mtx.unlock_shared();
                 AdvSleep(1);
             }
             return true;
@@ -18341,15 +18169,34 @@ namespace cjs {
             if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
                 return {};
             }
-            if (jsmdPtr->runnedTaskList.count(id)) return jsmdPtr->runnedTaskList[id];
-            else return {};
+
+            jsmdPtr->runnedTaskList_mtx.lock_shared();
+            auto it = jsmdPtr->runnedTaskList.find(id);
+            if (it != jsmdPtr->runnedTaskList.end()) {
+                auto ret = it->second;
+                jsmdPtr->runnedTaskList_mtx.unlock_shared();
+                return ret;
+            }
+            else { 
+                jsmdPtr->runnedTaskList_mtx.unlock_shared();
+                return {};
+            }
         }
         static bool deleteTask(JSContext* ctx, ULL id) {
             JSMData* jsmdPtr = nullptr;
-            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr || !jsmdPtr->taskList.count(id)) {
+            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
                 return false;
             }
-            return jsmdPtr->taskList.erase(id) || jsmdPtr->runnedTaskList.erase(id);
+            jsmdPtr->taskList_mtx.lock_shared();
+            if (!jsmdPtr->taskList.count(id)) {
+                jsmdPtr->taskList_mtx.unlock_shared();
+                return false;
+            }
+            jsmdPtr->runnedTaskList_mtx.lock_shared();
+            bool ret = jsmdPtr->taskList.erase(id) || jsmdPtr->runnedTaskList.erase(id);
+            jsmdPtr->runnedTaskList_mtx.unlock_shared();
+            jsmdPtr->taskList_mtx.unlock_shared();
+            return ret;
         }
         static void RunTask(JSContext* ctx) {
 
@@ -18362,7 +18209,16 @@ namespace cjs {
             jsmdPtr->isRunningTask = true;
 
             JSRuntime* rt = JS_GetRuntime(ctx);
-            while ((((JS_IsJobPending(rt) || !jsmdPtr->taskList.empty()) || !jsmdPtr->threadList.empty()) && !jsmdPtr->isQuit) && !isQuit) {
+            while (true) {
+                jsmdPtr->taskList_mtx.lock_shared();
+                jsmdPtr->threadList_mtx.lock_shared();
+                if (jsmdPtr->isNeedBreakTask || !((((JS_IsJobPending(rt) || !jsmdPtr->taskList.empty()) || !jsmdPtr->threadList.empty()) && !jsmdPtr->isQuit) && !isQuit)) {
+                    jsmdPtr->taskList_mtx.unlock_shared();
+                    jsmdPtr->threadList_mtx.unlock_shared();
+                    break;
+                }
+                jsmdPtr->taskList_mtx.unlock_shared();
+                jsmdPtr->threadList_mtx.unlock_shared();
 
                 if (!jsmdPtr->threadList.empty() && (!JS_IsJobPending(rt) && jsmdPtr->taskList.empty())) {
                     update(ctx);
@@ -18375,14 +18231,16 @@ namespace cjs {
                 JSContext* ctx_unused = nullptr;
                 JS_ExecutePendingJob(rt, &ctx_unused);
 
-                jsmdPtr->taskList.lock();
+                jsmdPtr->taskList_mtx.lock();
                 auto it = jsmdPtr->taskList.begin();
                 if (it == jsmdPtr->taskList.end()) {
-                    jsmdPtr->taskList.unlock();
+                    jsmdPtr->taskList_mtx.unlock();
                     continue;
                 }
                 ULL id = it->first;
                 Task task = it->second;
+                jsmdPtr->taskList.erase(it);
+                jsmdPtr->taskList_mtx.unlock();
 
                 if (task.type == "js") {
 
@@ -18391,23 +18249,36 @@ namespace cjs {
                     td.isValid = true;
                     td.task = task;
                     td.ret = ret;
-                    jsmdPtr->runnedTaskList.lock();
-                    jsmdPtr->runnedTaskList[id] = td;
-                    jsmdPtr->runnedTaskList.unlock();
+                    jsmdPtr->runnedTaskList_mtx.lock();
+                    jsmdPtr->runnedTaskList[id] = std::move(td);
+                    jsmdPtr->runnedTaskList_mtx.unlock();
 
                 }
                 else if (task.type == "native" && task.nativeCallback) {
                     task.nativeCallback();
                 }
 
-                jsmdPtr->taskList.erase(it);
-                jsmdPtr->taskList.unlock();
-
                 update(ctx);
             }
 
             jsmdPtr->isRunningTask = false;
 
+        }
+        static bool ClearTask(JSContext* ctx) {
+            JSMData* jsmdPtr = nullptr;
+            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
+                return false;
+            }
+            jsmdPtr->threadList_mtx.lock();
+            jsmdPtr->threadList.clear();
+            jsmdPtr->threadList_mtx.unlock();
+            jsmdPtr->taskList_mtx.lock();
+            jsmdPtr->taskList.clear();
+            jsmdPtr->taskList_mtx.unlock();
+            jsmdPtr->runnedTaskList_mtx.lock();
+            jsmdPtr->runnedTaskList.clear();
+            jsmdPtr->runnedTaskList_mtx.unlock();
+            return true;
         }
         static bool AddAsyncTask(JSContext* ctx, std::function<void()> task, Thread* out = nullptr) {
             JSMData* jsmdPtr = nullptr;
@@ -18417,7 +18288,9 @@ namespace cjs {
                 });
             Thread td = std::move(t);
             td.detach();
+            jsmdPtr->threadList_mtx.lock();
             jsmdPtr->threadList.push_back(td);
+            jsmdPtr->threadList_mtx.unlock();
             update(ctx);
             if (out) *out = td;
             return true;
@@ -18426,8 +18299,10 @@ namespace cjs {
         static ULL GetCJSValue(JSContext* ctx, JSV jsv) {
             JSMData* jsmdPtr = nullptr;
             if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) return 0;
+            jsmdPtr->hModuleCJSValueList_mtx.lock();
             ULL id = GetNewCJSValueId(ctx);
             jsmdPtr->hModuleCJSValueList[id] = jsv;
+            jsmdPtr->hModuleCJSValueList_mtx.unlock();
             return id;
         }
         static ULL GetNewFileControllerId(JSContext* ctx) {
@@ -18464,9 +18339,7 @@ namespace cjs {
             JSMData* jsmdPtr = nullptr;
             if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) return 0;
             static ULL counter = 0;
-            jsmdPtr->taskList.lock();
             ULL id = GetNewIdGeneric(ctx, jsmdPtr->taskList, counter);
-            jsmdPtr->taskList.unlock();
             return id;
         }
         static ULL GetNewCJSValueId(JSContext* ctx) {
@@ -20633,19 +20506,19 @@ namespace cjs {
             if (jsmdPtr->isUpdating) return;
             jsmdPtr->isUpdating = true;
 
-            jsmdPtr->timeoutList.lock();
+            jsmdPtr->timeoutList_mtx.lock();
             for (auto it = jsmdPtr->timeoutList.begin(); it != jsmdPtr->timeoutList.end();) {
                 if (it->second.thread.quited()) it = jsmdPtr->timeoutList.erase(it);
                 else ++it;
             }
-            jsmdPtr->timeoutList.unlock();
+            jsmdPtr->timeoutList_mtx.unlock();
 
-            jsmdPtr->threadList.lock();
+            jsmdPtr->threadList_mtx.lock();
             for (auto it = jsmdPtr->threadList.begin(); it != jsmdPtr->threadList.end();) {
                 if (it->quited()) it = jsmdPtr->threadList.erase(it);
                 else ++it;
             }
-            jsmdPtr->threadList.unlock();
+            jsmdPtr->threadList_mtx.unlock();
 
             jsmdPtr->isUpdating = false;
 
@@ -20716,6 +20589,9 @@ namespace cjs {
 
             try {
                 jsm = new JavaScriptMethod(this, jsRuntime, jsContext);
+                if (!GetData(jsContext, &jsmdPtr)) {
+                    throw std::runtime_error("[JavaScript.init] Failed to get data.");
+                }
             }
             catch (...) {
 
@@ -20735,43 +20611,32 @@ namespace cjs {
         bool isInit() {
             return isInit1;
         }
-        JSINFO eval(const std::wstring& InCode, const std::wstring& fileName = L"typein", const bool isHookOutput = false, OpaqueData data = {}) {
-            if (!isInit()) return {};
-            std::string code = wstringToString(InCode);
+        JSINFO getInfoInternal(JSV result, const bool& tempIsConsoleEnv, const bool& isHookOutput = false, const OpaqueData& data = {}) {
+            JSINFO jsif = {};
+            jsif.isValid = true;
 
-            bool tempIsConsoleEnv = isConsoleEnv;
-            if (isHookOutput) isConsoleEnv = false;
-            if (isHookOutput) ClearOutput();
-
-            JSV system = JavaScriptMethod::GetProperty(jsContext, JavaScriptMethod::NewGlobalObject(jsContext), "system");
-            JavaScriptMethod::SetAttribute(jsContext, system, "path", wstringToString(FormatPath(fileName)));
-            if (data.isValid) {
-                JavaScriptMethod::SetAttribute(jsContext, system, "cmdLine", wstringToString(data.cmdLine));
-                JavaScriptMethod::SetAttribute(jsContext, system, "cmdLineArgs", JavaScriptMethod::NewObject(jsContext, data.cmdLineArgs));
-                JavaScriptMethod::SetAttribute(jsContext, system, "scriptPath", wstringToString(data.scriptPath));
+            if (JS_VALUE_GET_TAG(result.get(0)) == JS_TAG_FUNCTION_BYTECODE) {
+                jsif.isSuccess = true;
+                jsif.result = result;
+                return jsif;
             }
 
-            JSValue ret = JS_Eval(
-                jsContext,
-                code.c_str(),
-                code.length(),
-                wstringToString(fileName).c_str(),
-                JS_EVAL_TYPE_GLOBAL | JS_EVAL_FLAG_ASYNC
-            );
-            JavaScriptMethod::RunTask(jsContext);
-            JSV result = JSV(jsContext, ret).cset(1);
             JSV promiseResult = JSV(jsContext, JS_PromiseResult(jsContext, result.get(0))).cset(1);
             bool isSuccess = JS_PromiseState(jsContext, result.get(0)) == JS_PROMISE_FULFILLED && !JS_IsException(result.get(0));
             promiseResult = (!isSuccess) ? promiseResult : JavaScriptMethod::GetProperty(jsContext, promiseResult, "value");
 
-            JSINFO jsif = {};
             if (isHookOutput) jsif.output = outputTemp;
             if (isHookOutput) ClearOutput();
             if (isHookOutput) isConsoleEnv = tempIsConsoleEnv;
-            jsif.isValid = true;
             jsif.result = promiseResult;
 
-            if (!isSuccess) {
+            if (jsmdPtr && jsmdPtr->isNeedBreakTask) {
+                JavaScriptMethod::ClearTask(jsContext);
+                jsmdPtr->isNeedBreakTask = false;
+                jsif.isSuccess = true;
+                jsif.message = L"undefined";
+            }
+            else if (!isSuccess) {
                 std::string errorType = "";
                 std::string errorMessage = "";
                 bool isPromiseRejectWithNonError = false;
@@ -20791,10 +20656,12 @@ namespace cjs {
                         isPromiseRejectWithNonError = true;
                     }
                 }
-                if (errorMessage == "[native code] Quit the context") {
-                    jsif.isSuccess = true;
-                    jsif.message = L"undefined";
-                    goto EndProcess;
+                if (errorType == "InternalError") {
+                    if (errorMessage == "interrupted") {
+                        jsif.isSuccess = true;
+                        jsif.message = L"undefined";
+                        goto EndProcess;
+                    }
                 }
                 jsif.isSuccess = false;
                 if (!isPromiseRejectWithNonError) {
@@ -20816,13 +20683,49 @@ namespace cjs {
                 bool tempIsConsoleEnv = isConsoleEnv;
                 isConsoleEnv = false;
                 ClearOutput();
-                JavaScriptMethod::CallFunction(jsContext, JavaScriptMethod::GetProperty(jsContext, JavaScriptMethod::NewGlobalObject(jsContext), { {"console"}, {"log"} }), JS_UNDEFINED, { {promiseResult} });
+                JavaScriptMethod::CallFunction(jsContext, JavaScriptMethod::GetProperty(jsContext, JavaScriptMethod::NewGlobalObject(jsContext), { { "console" },{ "log" } }), JS_UNDEFINED, { { promiseResult } });
                 jsif.detail = outputTemp;
                 ClearOutput();
                 isConsoleEnv = tempIsConsoleEnv;
             }
         EndProcess:;
             return jsif;
+        }
+        JSINFO eval(const std::wstring& InCode, const std::wstring& fileName = L"typein", const bool& isHookOutput = false, const OpaqueData& data = {}) {
+            if (!isInit()) return {};
+            std::string code = wstringToString(InCode);
+
+            bool tempIsConsoleEnv = isConsoleEnv;
+            if (isHookOutput) isConsoleEnv = false;
+            if (isHookOutput) ClearOutput();
+
+            JSV system = JavaScriptMethod::GetProperty(jsContext, JavaScriptMethod::NewGlobalObject(jsContext), "system");
+            JavaScriptMethod::SetAttribute(jsContext, system, "path", wstringToString(FormatPath(fileName)));
+
+            int evalFlag = JS_EVAL_TYPE_GLOBAL | JS_EVAL_FLAG_ASYNC;
+            if (data.isValid) {
+                JavaScriptMethod::SetAttribute(jsContext, system, "cmdLine", wstringToString(data.cmdLine));
+                JavaScriptMethod::SetAttribute(jsContext, system, "cmdLineArgs", JavaScriptMethod::NewObject(jsContext, data.cmdLineArgs));
+                JavaScriptMethod::SetAttribute(jsContext, system, "scriptPath", wstringToString(data.scriptPath));
+
+                evalFlag |= data.arg_eval_flag;
+            }
+
+            JSValue ret = JS_Eval(
+                jsContext,
+                code.c_str(),
+                code.length(),
+                wstringToString(fileName).c_str(),
+                evalFlag
+            );
+            JavaScriptMethod::RunTask(jsContext);
+
+            JSV result = JSV(jsContext, ret).cset(1);
+
+            return getInfoInternal(result, tempIsConsoleEnv, isHookOutput, data);
+        }
+        JSINFO getInfo(JSV result, const OpaqueData& data = {}) {
+            return getInfoInternal(result, true, false, data);
         }
         JavaScriptMethod* getMethodThis() {
             return jsm;
@@ -20841,6 +20744,8 @@ namespace cjs {
         void child_system_exit() {
             isAlive = false;
         }
+
+        JSMData* jsmdPtr = nullptr;
     private:
         bool isAlive = false;
         bool isInit1 = false;
@@ -20852,8 +20757,11 @@ namespace cjs {
     };
 
     typedef std::shared_ptr<JavaScript> JS;
-    JSINFO EvalInstance(JavaScript* instance, const std::wstring& code, const std::wstring& fileName) {
-        return instance->eval(code, fileName);
+    JSINFO EvalInstance(JavaScript* instance, const std::wstring& code, const std::wstring& fileName, bool isHookOutput, OpaqueData data) {
+        return instance->eval(code, fileName, isHookOutput, data);
+    }
+    JSINFO GetInfo(JavaScript* instance, JSV result, const OpaqueData& data) {
+        return instance->getInfo(result, data);
     }
     void DeleteInstance(JavaScript* instance) {
         return delete instance;
@@ -20895,7 +20803,10 @@ namespace cjs {
             CreateOutput(L"Warning: Library '" + path + L"' is invalid.\n", GetColorValue(L"Warning"));
             return false;
         }
+
+        jsmdPtr->hModuleList_mtx.lock();
         jsmdPtr->hModuleList.push_back(hm);
+        jsmdPtr->hModuleList_mtx.unlock();
 
         CJSVERSION version = 0;
 

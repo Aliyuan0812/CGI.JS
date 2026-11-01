@@ -9,11 +9,14 @@ extern "C" {
 #define jsm JavaScriptMethod
 
     CJSBool FindCJSValue(JSMData* jsmdPtr, CJSValue cjsv, JSV& jsv) {
+        jsmdPtr->hModuleCJSValueList_mtx.lock_shared();
         auto it = jsmdPtr->hModuleCJSValueList.find(cjsv);
         if (it != jsmdPtr->hModuleCJSValueList.end()) {
             jsv = it->second;
+            jsmdPtr->hModuleCJSValueList_mtx.unlock_shared();
             return true;
         }
+        jsmdPtr->hModuleCJSValueList_mtx.unlock_shared();
         return false;
     }
 
@@ -21,7 +24,10 @@ extern "C" {
         JSContext* ctx = (JSContext*)in_ctx;
         JSMData* jsmdPtr = nullptr;
         if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) return {};
-        return jsmdPtr->hModuleCJSValueList.count(in_cjsv) && jsmdPtr->hModuleCJSValueList.erase(in_cjsv);
+        jsmdPtr->hModuleCJSValueList_mtx.lock();
+        bool ret = jsmdPtr->hModuleCJSValueList.count(in_cjsv) && jsmdPtr->hModuleCJSValueList.erase(in_cjsv);
+        jsmdPtr->hModuleCJSValueList_mtx.unlock();
+        return ret;
     }
     CAEXP CJSBool cjs_FreePromise(CJSContext in_ctx, CJSPromise in_promise) {
         return cjs_FreeCJSValue(in_ctx, in_promise.promise) && cjs_FreeCJSValue(in_ctx, in_promise.resolve) && cjs_FreeCJSValue(in_ctx, in_promise.reject);
@@ -30,7 +36,9 @@ extern "C" {
         JSContext* ctx = (JSContext*)in_ctx;
         JSMData* jsmdPtr = nullptr;
         if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) return {};
+        jsmdPtr->hModuleCJSValueList_mtx.lock();
         jsmdPtr->hModuleCJSValueList.clear();
+        jsmdPtr->hModuleCJSValueList_mtx.unlock();
         return true;
     }
 
@@ -190,25 +198,32 @@ extern "C" {
         size_t argumentCount = CopyVectorData(argument, &argumentValues);
         argument.clear();
 
+        jsmdPtr->argumentPackageList_mtx.lock();
         CJSID id = jsm::GetNewArgumentPackageId(in_ctx);
         jsmdPtr->argumentPackageList[id].id = id;
         jsmdPtr->argumentPackageList[id].ctx = ctx;
         jsmdPtr->argumentPackageList[id].thisVal = thisVal;
         jsmdPtr->argumentPackageList[id].argumentValues = argumentValues;
         jsmdPtr->argumentPackageList[id].argumentCount = argumentCount;
-
-        return jsmdPtr->argumentPackageList[id];
+        auto ret = jsmdPtr->argumentPackageList[id];
+        jsmdPtr->argumentPackageList_mtx.unlock();
+        return ret;
     }
     CAEXP CJSBool cjs_FreeArgumentPackage(CJSArgumentPackage cap) {
         JSMData* jsmdPtr = nullptr;
-        if (!GetData((JSContext*)cap.ctx, &jsmdPtr) || jsmdPtr == nullptr || !jsmdPtr->argumentPackageList.count(cap.id)) return {};
+        jsmdPtr->argumentPackageList_mtx.lock_shared();
+        bool count = jsmdPtr->argumentPackageList.count(cap.id);
+        jsmdPtr->argumentPackageList_mtx.unlock_shared();
+        if (!GetData((JSContext*)cap.ctx, &jsmdPtr) || jsmdPtr == nullptr || !count) return {};
         CJSBool ret = true;
         if (!cjs_FreeCJSValue(cap.ctx, cap.thisVal)) ret = false;
         for (CJSSize i = 0; i < cap.argumentCount; i++) {
             if (!cjs_FreeCJSValue(cap.ctx, cap.argumentValues[i])) ret = false;
         }
         delete[] cap.argumentValues;
+        jsmdPtr->argumentPackageList_mtx.lock();
         if (!jsmdPtr->argumentPackageList.erase(cap.id)) ret = false;
+        jsmdPtr->argumentPackageList_mtx.unlock();
         return ret;
     }
     CAEXP CJSBool cjs_SetProperty(CJSContext in_ctx, CJSValue in_cjsv, CJSValue in_propName, CJSValue in_propValue, cjs_int64 flags) {
@@ -273,7 +288,9 @@ extern "C" {
         if (!FindCJSValue(jsmdPtr, in_cjsv, jsv)) {
             return {};
         }
+        jsmdPtr->argumentPackageList_mtx.lock();
         jsmdPtr->argumentPackageList.erase(in_cjsv);
+        jsmdPtr->argumentPackageList_mtx.unlock();
         return jsv.get(1);
     }
     CAEXP JSContext* cjs_GetOriginContext(CJSContext in_ctx) {
@@ -420,13 +437,16 @@ extern "C" {
         JSContext* ctx = (JSContext*)in_ctx;
         JSMData* jsmdPtr = nullptr;
         if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) return {};
+        jsmdPtr->cjsByteDataList_mtx.lock();
         for (auto& [id, data] : jsmdPtr->cjsByteDataList) {
             if (data.data == in_data) {
                 FreeHeapData(data);
                 jsmdPtr->cjsByteDataList.erase(id);
+                jsmdPtr->cjsByteDataList_mtx.unlock();
                 return true;
             }
         }
+        jsmdPtr->cjsByteDataList_mtx.unlock();
         return false;
     }
     CAEXP CJSBool cjs_ReadAsArrayBufferView(CJSContext in_ctx, CJSValue in_cjsv, cjs_size* out_sizePtr, cjs_byte** out_dataPtr) {
@@ -445,10 +465,12 @@ extern "C" {
         cjs_byte* dataPtr = nullptr;
         cjs_size dataSize = static_cast<cjs_size>(CopyVectorData(data, &dataPtr));
 
+        jsmdPtr->cjsByteDataList_mtx.lock();
         CJSID id = jsm::GetNewCJSByteId(ctx);
         jsmdPtr->cjsByteDataList[id].data = dataPtr;
         jsmdPtr->cjsByteDataList[id].size = dataSize;
         jsmdPtr->cjsByteDataList[id].tag = 1;
+        jsmdPtr->cjsByteDataList_mtx.unlock();
 
         if (out_sizePtr != nullptr) *out_sizePtr = dataSize;
         if (out_dataPtr != nullptr) *out_dataPtr = dataPtr;
@@ -471,10 +493,12 @@ extern "C" {
         cjs_byte* dataPtr = nullptr;
         cjs_size dataSize = static_cast<cjs_size>(CopyVectorData(data, &dataPtr));
 
+        jsmdPtr->cjsByteDataList_mtx.lock();
         CJSID id = jsm::GetNewCJSByteId(ctx);
         jsmdPtr->cjsByteDataList[id].data = dataPtr;
         jsmdPtr->cjsByteDataList[id].size = dataSize;
         jsmdPtr->cjsByteDataList[id].tag = 1;
+        jsmdPtr->cjsByteDataList_mtx.unlock();
 
         if (out_sizePtr != nullptr) *out_sizePtr = dataSize;
         if (out_dataPtr != nullptr) *out_dataPtr = dataPtr;
@@ -497,10 +521,12 @@ extern "C" {
         cjs_byte* dataPtr = nullptr;
         cjs_size dataSize = static_cast<cjs_size>(CopyVectorData(data, &dataPtr));
 
+        jsmdPtr->cjsByteDataList_mtx.lock();
         CJSID id = jsm::GetNewCJSByteId(ctx);
         jsmdPtr->cjsByteDataList[id].data = dataPtr;
         jsmdPtr->cjsByteDataList[id].size = dataSize;
         jsmdPtr->cjsByteDataList[id].tag = 1;
+        jsmdPtr->cjsByteDataList_mtx.unlock();
 
         if (out_sizePtr != nullptr) *out_sizePtr = dataSize;
         if (out_dataPtr != nullptr) *out_dataPtr = dataPtr;
@@ -523,10 +549,12 @@ extern "C" {
         cjs_byte* dataPtr = nullptr;
         cjs_size dataSize = static_cast<cjs_size>(CopyVectorData(data, &dataPtr));
 
+        jsmdPtr->cjsByteDataList_mtx.lock();
         CJSID id = jsm::GetNewCJSByteId(ctx);
         jsmdPtr->cjsByteDataList[id].data = dataPtr;
         jsmdPtr->cjsByteDataList[id].size = dataSize;
         jsmdPtr->cjsByteDataList[id].tag = 1;
+        jsmdPtr->cjsByteDataList_mtx.unlock();
 
         if (out_sizePtr != nullptr) *out_sizePtr = dataSize;
         if (out_dataPtr != nullptr) *out_dataPtr = dataPtr;
@@ -549,10 +577,12 @@ extern "C" {
         cjs_byte* dataPtr = nullptr;
         cjs_size dataSize = static_cast<cjs_size>(CopyVectorData(data, &dataPtr));
 
+        jsmdPtr->cjsByteDataList_mtx.lock();
         CJSID id = jsm::GetNewCJSByteId(ctx);
         jsmdPtr->cjsByteDataList[id].data = dataPtr;
         jsmdPtr->cjsByteDataList[id].size = dataSize;
         jsmdPtr->cjsByteDataList[id].tag = 1;
+        jsmdPtr->cjsByteDataList_mtx.unlock();
 
         if (out_sizePtr != nullptr) *out_sizePtr = dataSize;
         if (out_dataPtr != nullptr) *out_dataPtr = dataPtr;
@@ -575,9 +605,11 @@ extern "C" {
         cjs_byte* dataPtr = nullptr;
         cjs_size dataSize = static_cast<cjs_size>(CopyVectorData(data, &dataPtr));
 
+        jsmdPtr->cjsByteDataList_mtx.lock();
         CJSID id = jsm::GetNewCJSByteId(ctx);
         jsmdPtr->cjsByteDataList[id].data = dataPtr;
         jsmdPtr->cjsByteDataList[id].size = dataSize;
+        jsmdPtr->cjsByteDataList_mtx.unlock();
 
         if (out_sizePtr != nullptr) *out_sizePtr = dataSize;
         if (out_dataPtr != nullptr) *out_dataPtr = dataPtr;
@@ -601,10 +633,12 @@ extern "C" {
         cjs_byte* dataPtr = nullptr;
         cjs_size dataSize = static_cast<cjs_size>(CopyVectorData(data, &dataPtr));
 
+        jsmdPtr->cjsByteDataList_mtx.lock();
         CJSID id = jsm::GetNewCJSByteId(ctx);
         jsmdPtr->cjsByteDataList[id].data = dataPtr;
         jsmdPtr->cjsByteDataList[id].size = dataSize;
         jsmdPtr->cjsByteDataList[id].tag = 1;
+        jsmdPtr->cjsByteDataList_mtx.unlock();
 
         if (out_sizePtr != nullptr) *out_sizePtr = dataSize;
         if (out_dataPtr != nullptr) *out_dataPtr = dataPtr;
@@ -628,10 +662,12 @@ extern "C" {
         cjs_byte* dataPtr = nullptr;
         cjs_size dataSize = static_cast<cjs_size>(CopyVectorData(data, &dataPtr));
 
+        jsmdPtr->cjsByteDataList_mtx.lock();
         CJSID id = jsm::GetNewCJSByteId(ctx);
         jsmdPtr->cjsByteDataList[id].data = (void*)dataPtr;
         jsmdPtr->cjsByteDataList[id].size = dataSize;
         jsmdPtr->cjsByteDataList[id].tag = 1;
+        jsmdPtr->cjsByteDataList_mtx.unlock();
 
         if (out_sizePtr != nullptr) *out_sizePtr = dataSize;
         if (out_dataPtr != nullptr) *out_dataPtr = dataPtr;
@@ -664,10 +700,12 @@ extern "C" {
         cjs_string dataPtr = nullptr;
         cjs_size dataSize = static_cast<cjs_size>(CopyStringData(data, &dataPtr));
 
+        jsmdPtr->cjsByteDataList_mtx.lock();
         CJSID id = jsm::GetNewCJSByteId(ctx);
         jsmdPtr->cjsByteDataList[id].data = (void*)dataPtr;
         jsmdPtr->cjsByteDataList[id].size = dataSize;
         jsmdPtr->cjsByteDataList[id].tag = 2;
+        jsmdPtr->cjsByteDataList_mtx.unlock();
 
         if (out_data != nullptr) *out_data = dataPtr;
 
@@ -1018,7 +1056,7 @@ extern "C" {
         jsm::CallFunction(ctx, js_promise, js_promise, { js_value });
         return true;
     }
-    CAEXP CJSID cjs_EnqueueTask(CJSContext in_ctx, CJSValue in_task, CJSValue in_this, cjs_int in_argumentCount, CJSValue* in_argumentValues) {
+    CAEXP CJSID cjs_AddTask(CJSContext in_ctx, CJSValue in_task, CJSValue in_this, cjs_int in_argumentCount, CJSValue* in_argumentValues) {
         JSContext* ctx = (JSContext*)in_ctx;
         JSMData* jsmdPtr = nullptr;
         if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) return {};
@@ -1052,6 +1090,18 @@ extern "C" {
         size_t size = jsmdPtr->taskList.size();
         jsm::RunTask(ctx);
         return static_cast<CJSSize>(size);
+    }
+    CAEXP CJSID cjs_AddNativeTask(CJSContext in_ctx, CJSVoid* in_opaque, CJSNativeTask in_task) {
+        JSContext* ctx = (JSContext*)in_ctx;
+        return static_cast<CJSID>(jsm::AddNativeTask(ctx, [=]() {
+            in_task(in_opaque);
+            }));
+    }
+    CAEXP CJSBool cjs_AddAsyncTask(CJSContext in_ctx, CJSVoid* in_opaque, CJSNativeTask in_task) {
+        JSContext* ctx = (JSContext*)in_ctx;
+        return (jsm::AddAsyncTask(ctx, [=]() {
+            in_task(in_opaque);
+            }));
     }
 
 

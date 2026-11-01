@@ -33,7 +33,7 @@ extern "C" {
     typedef unsigned long long CJSVERSION, cjs_uint64, CJSUint64, CJSID;
     typedef uint8_t cjs_uint8, CJSUint8;
     typedef long long CJSValue;
-    typedef void* CJSContext;
+    typedef void *CJSContext, CJSVoid;
     typedef double cjs_double, CJSDouble;
     typedef long long cjs_int64, CJSInt64;
     typedef int cjs_int32, CJSInt32;
@@ -111,7 +111,7 @@ extern "C" {
     typedef cjs_bool(CACALL* type_cjs_GeneralNewCJSValue)(CJSContext);
     typedef JSValue(CACALL* type_cjs_GetOriginValue)(CJSContext, CJSValue);
     typedef JSContext* (CACALL* type_cjs_GetOriginContext)(CJSContext);
-    typedef void(CACALL* type_cjs_ExitHandle)();
+    typedef CJSVoid(CACALL* type_cjs_ExitHandle)();
     typedef CJSValue(CACALL* type_cjs_CallFunction)(CJSContext, CJSValue, CJSValue, cjs_int, CJSValue*);
     typedef CJSValue(CACALL* type_cjs_CallConstructor)(CJSContext, CJSValue, cjs_int, CJSValue*);
     typedef CJSValue(CACALL* type_cjs_GetCJSValue)(CJSContext, JSValue);
@@ -139,10 +139,15 @@ extern "C" {
     typedef CJSValue(CACALL* type_cjs_PromiseGetResult)(CJSContext, CJSValue);
     typedef CJSPromiseState(CACALL* type_cjs_PromiseGetState)(CJSContext, CJSValue);
     typedef cjs_bool(CACALL* type_cjs_PromiseResolveReject)(CJSContext, CJSValue, CJSValue);
-    typedef CJSID(CACALL* type_cjs_EnqueueTask)(CJSContext, CJSValue, CJSValue, cjs_int, CJSValue*);
+    typedef CJSID(CACALL* type_cjs_AddTask)(CJSContext, CJSValue, CJSValue, cjs_int, CJSValue*);
     typedef cjs_bool(CACALL* type_cjs_RemoveTask)(CJSContext, CJSID);
     typedef CJSValue(CACALL* type_cjs_QueryTask)(CJSContext, CJSID);
     typedef CJSSize(CACALL* type_cjs_RunTask)(CJSContext);
+    typedef CJSVoid(CACALL* type_cjs_NativeTask)(CJSVoid*);
+    typedef type_cjs_NativeTask CJSNativeTask;
+    typedef CJSID(CACALL* type_cjs_AddNativeTask)(CJSContext, CJSVoid*, CJSNativeTask);
+    typedef CJSBool(CACALL* type_cjs_AddAsyncTask)(CJSContext, CJSVoid*, CJSNativeTask);
+
 
 #define CJS_Assert_Print(expr) \
     fprintf(stderr, "\n========================================\n" \

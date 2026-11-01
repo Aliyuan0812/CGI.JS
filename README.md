@@ -33,9 +33,9 @@ CGI.JS(CJS)将 FastCGI 与 QuickJS-NG 结合，提供现代化的 JS 执行环�
 2. 编译生成可执行文件
 3. 直接运行 `.cjs` 脚本或作为 FCGI 后端启动
 
-```bash
+`bash
 cjs.exe script.cjs
-```
+`
 
 ##### **相关文档**
 
@@ -57,11 +57,12 @@ cjs.exe script.cjs
 
 ### **更新日志**
 
-* 发布版本v3.6.20261029.01: 修复 ```system.execute``` 的多线程安全问题，新增 ```filesystem.input```、```filesystem.scan```、```filesystem.info```，修复 ```filesystem.list``` 列出占有锁文件的问题。
-* 发布版本v3.5.20261026.01: 修复 ```window.crypto``` 和 ```window.bytebuffer``` 的多线程安全问题，以及修复一系列多线程安全问题。 
-* 发布版本v3.4.20261025.01: 修复 ```network.http.open``` 和 ```window.setTimeout``` 的多线程安全问题。 
-* 发布版本v3.3.20261024.01: 修复 ```window.include``` 在非模块化环境下不可用的问题，优化 ```network.http.open``` 使其更加可靠规范，优化十余并发安全问题。
-* 发布版本v3.2.20261017.01: 对 ```filesystem.open```、```script.execute```、```network.http.open``` 的返回值加入ES显式资源管理的 ```using``` 支持，修复参考文档的部分注明错误，升级 ```console.log``` 的输出性能、格式，修改 ```filesystem.count```、```filesystem.remove``` 的返回值由 **BigInt** 至 **Number**，修复一系列已知Bugs。
+* 发布版本v3.7.20261101.01: 新增 `script.compile`、`script.run`、`script.validate` 用于 编译/执行/验证 字节码，全面加强多线程安全，修复 `system.exit()` 在 `try-catch` 中失效的问题，修改 Ctrl + C 为终止当前操作，Ctrl + Break 为退出程序，优化众多性能问题，加入一堆启动参数。有关新特性的使用，请参阅 [API参考文档](./docs/api-reference.md)。
+* 发布版本v3.6.20261029.01: 修复 `system.execute` 的多线程安全问题，新增 `filesystem.input`、`filesystem.scan`、`filesystem.info`，修复 `filesystem.list` 列出占有锁文件的问题。
+* 发布版本v3.5.20261026.01: 修复 `window.crypto` 和 `window.bytebuffer` 的多线程安全问题，以及修复一系列多线程安全问题。 
+* 发布版本v3.4.20261025.01: 修复 `network.http.open` 和 `window.setTimeout` 的多线程安全问题。 
+* 发布版本v3.3.20261024.01: 修复 `window.include` 在非模块化环境下不可用的问题，优化 `network.http.open` 使其更加可靠规范，优化十余并发安全问题。
+* 发布版本v3.2.20261017.01: 对 `filesystem.open`、`script.execute`、`network.http.open` 的返回值加入ES显式资源管理的 `using` 支持，修复参考文档的部分注明错误，升级 `console.log` 的输出性能、格式，修改 `filesystem.count`、`filesystem.remove` 的返回值由 **BigInt** 至 **Number**，修复一系列已知Bugs。
 * 发布版本v3.1.20261005.01: 升级内核至0.17.0版本。
 * 发布版本v3.0.20261004.01: 升级内核至0.16.2版本，重磅支持ES2026 Stage4特性，修复一系列历史性问题，全量重写帮助文档。
 

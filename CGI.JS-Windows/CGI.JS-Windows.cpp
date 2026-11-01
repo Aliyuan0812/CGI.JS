@@ -2,7 +2,7 @@
 
 #ifndef AY_CJS_CPP
 #define AY_CJS_CPP
-#define AY_CJS_CPP_VW std::wstring(L"3.6.20261029.01")
+#define AY_CJS_CPP_VW std::wstring(L"3.7.20261101.01")
 #define AY_CJS_CPP_VL []() -> std::wstring { \
     std::wstring s(AY_CJS_CPP_VW); \
     s.erase(std::remove(s.begin(), s.end(), L'.'), s.end()); \
@@ -20,10 +20,18 @@ using namespace cjs;
 //    fc.write(&data);
 //}
 
+bool arg_native = false;
+bool arg_no_welcome = false;
+bool arg_no_final_output = false;
+bool arg_no_console = false;
+bool arg_no_prompt = false;
+bool arg_interactive = false;
+bool arg_version = false;
+
 int Main(const OpaqueData& data) {
     mode = "repl";
-
-    int consoleResult = CreateConsole(L"CGI.JS - " + cplatform + AY_CJS_CPP_VW + L"");
+    
+    int consoleResult = CreateConsole(L"CGI.JS - " + cplatform + AY_CJS_CPP_VW + L"", arg_native);
     if (consoleResult == 0) {
         return EXIT_FAILURE;
     }
@@ -34,6 +42,15 @@ int Main(const OpaqueData& data) {
         return EXIT_FAILURE;
     }
 
+    if (arg_version) {
+        CreateOutput(AY_CJS_CPP_VW);
+        if (isAlwaysPauseWhenQuit) { 
+            CreateOutput(L"\n");
+            system("pause");
+        }
+        return EXIT_SUCCESS;
+    }
+    
     JS js = nullptr;
     try {
         js = std::make_shared<JavaScript>();
@@ -44,20 +61,29 @@ int Main(const OpaqueData& data) {
         if (isAlwaysPauseWhenQuit) system("pause");
         return EXIT_FAILURE;
     }
+    onctrlC = [=]() {
+        js->jsmdPtr->isNeedBreak = true;
+        };
 
-    CreateOutput(L"Welcome to Cgi.js " + cplatform + AY_CJS_CPP_VW + L"\n");
-    CreateOutput(L"Type \"", GetColorValue(L"Default"));
-    CreateOutput(L"system.help()", GetColorValue(L"Function"));
-    CreateOutput(L"\" for more information.\n", GetColorValue(L"Default"));
-    CreateOutput(L"Interactive shell\n");
-    CreateOutput(L"\n");
+    if (!arg_no_welcome) {
+        CreateOutput(L"Welcome to Cgi.js " + cplatform + AY_CJS_CPP_VW + L"\n");
+        CreateOutput(L"Type \"", GetColorValue(L"Default"));
+        CreateOutput(L"system.help()", GetColorValue(L"Function"));
+        CreateOutput(L"\" for more information.\n", GetColorValue(L"Default"));
+        CreateOutput(L"Interactive shell\n");
+        CreateOutput(L"\n");
+    }
 
-    if (!isWTConsole) CreateOutput(L"For a better experience, please use the new Windows Terminal.\n\n");
+    if (!isConsoleAnsiSupported) CreateOutput(L"For a better experience, please use a terminal that supports ANSI output.\n\n");
 
     if (!errorOutput.empty()) {
         CreateOutput(errorOutput, GetColorValue(L"Warn"));
         CreateOutput(L"\n");
         errorOutput.clear();
+    }
+
+    if (!data.preEval.empty()) {
+        js->eval(data.preEval);
     }
 
     while (!IsConsoleClosed() && js->alive()) {
@@ -66,7 +92,7 @@ int Main(const OpaqueData& data) {
             continue;
         }
 
-        CreateOutput(L"cjs> ");
+        if (!arg_no_prompt) CreateOutput(L"cjs> ");
         std::wstring inputData = CreateInput();
         if (IsCodeEmpty(inputData)) continue;
 
@@ -91,13 +117,15 @@ int Main(const OpaqueData& data) {
             OutputStack(result.errorStack);
         }
     }
+
+    onctrlC = nullptr;
     js = nullptr;
     return EXIT_SUCCESS;
 }
 int FileMain(const OpaqueData& data) {
     mode = "file";
 
-    if (isShowConsole) {
+    if (!arg_no_console && isShowConsole) {
 
         int consoleResult = CreateConsole(L"CGI.JS - r" + AY_CJS_CPP_VW + L"");
         if (consoleResult == -1) {
@@ -126,13 +154,13 @@ int FileMain(const OpaqueData& data) {
         return EXIT_FAILURE;
     }
 
-    CreateOutput(L"Welcome to Cgi.js r" + AY_CJS_CPP_VW + L"\n");
-    CreateOutput(L"Executing file: ");
-    CreateOutput(L"'" + commandStartFilePath + L"'", GetColorValue(L"Function"));
-    CreateOutput(L"\n");
-    CreateOutput(L"\n");
-
-    if (!isWTConsole) CreateOutput(L"For a better experience, please use the new Windows Terminal.\n\n");
+    if (!arg_no_welcome) {
+        CreateOutput(L"Welcome to Cgi.js r" + AY_CJS_CPP_VW + L"\n");
+        CreateOutput(L"Executing file: ");
+        CreateOutput(L"'" + commandStartFilePath + L"'", GetColorValue(L"Function"));
+        CreateOutput(L"\n");
+        CreateOutput(L"\n");
+    }
 
     if (!errorOutput.empty()) {
         CreateOutput(errorOutput, GetColorValue(L"Warn"));
@@ -161,17 +189,53 @@ int FileMain(const OpaqueData& data) {
 
         JSINFO result = js->eval(code, commandStartFilePath, isTotalOutput, data);
 
-        if (!isTotalOutput) CreateOutput(L"\n");
+        if (!arg_no_final_output) {
+            if (!isTotalOutput) CreateOutput(L"\n");
+            if (!result.isValid) {
+                CreateOutput(L"Execution failed: \n", GetColorValue(L"Error"));
+                CreateOutput(L"Internal Error.\n", GetColorValue(L"Error"));
+                goto EndProcess;
+            }
+            else if (result.isSuccess) {
+                if (!isShowReturnValue) {
+                    if (result.output.empty())
+                        CreateOutput(L"Executed successfully.\n", GetColorValue(L"Success"));
+                    else {
+                        CreateOutput(L"Executed successfully: \n", GetColorValue(L"Success"));
 
-        if (!result.isValid) {
-            CreateOutput(L"Execution failed: \n", GetColorValue(L"Error"));
-            CreateOutput(L"Internal Error.\n", GetColorValue(L"Error"));
-            goto EndProcess;
-        }
-        else if (result.isSuccess) {
-            if (!isShowReturnValue) {
-                if (result.output.empty())
-                    CreateOutput(L"Executed successfully.\n", GetColorValue(L"Success"));
+                        if (!result.output.empty() && isTotalOutput) {
+                            CreateOutput(L"Output: \n", GetColorValue(L"Info"));
+                            for (const auto& [code, color] : result.output) {
+                                CreateOutput(code, color);
+                            }
+                            CreateOutput(L"\n");
+                        }
+                    }
+
+                    CreateOutput(L"\n");
+
+                    goto EndProcess;
+                }
+                if (isShowReturnDetail) {
+                    CreateOutput(L"Executed successfully: \n", GetColorValue(L"Success"));
+
+                    if (!result.output.empty() && isTotalOutput) {
+                        CreateOutput(L"Output: \n", GetColorValue(L"Info"));
+                        for (const auto& [code, color] : result.output) {
+                            CreateOutput(code, color);
+                        }
+                        CreateOutput(L"\n");
+                    }
+
+                    CreateOutput(L"Return detail: \n", GetColorValue(L"Info"));
+                    for (const auto& [code, color] : result.detail) {
+                        CreateOutput(code, color);
+                    }
+
+                    CreateOutput(L"\n");
+
+                    goto EndProcess;
+                }
                 else {
                     CreateOutput(L"Executed successfully: \n", GetColorValue(L"Success"));
 
@@ -182,34 +246,20 @@ int FileMain(const OpaqueData& data) {
                         }
                         CreateOutput(L"\n");
                     }
-                }
 
-                CreateOutput(L"\n");
-
-                goto EndProcess;
-            }
-            if (isShowReturnDetail) {
-                CreateOutput(L"Executed successfully: \n", GetColorValue(L"Success"));
-
-                if (!result.output.empty() && isTotalOutput) {
-                    CreateOutput(L"Output: \n", GetColorValue(L"Info"));
-                    for (const auto& [code, color] : result.output) {
-                        CreateOutput(code, color);
+                    CreateOutput(L"Return value: \n", GetColorValue(L"Info"));
+                    GMT processedText = GetCodeColor(result.message);
+                    for (const auto& [codeSegment, colorType] : processedText) {
+                        CreateOutput(codeSegment + L"\n", TextLightColorValue[colorType]);
                     }
+
                     CreateOutput(L"\n");
+
+                    goto EndProcess;
                 }
-
-                CreateOutput(L"Return detail: \n", GetColorValue(L"Info"));
-                for (const auto& [code, color] : result.detail) {
-                    CreateOutput(code, color);
-                }
-
-                CreateOutput(L"\n");
-
-                goto EndProcess;
             }
             else {
-                CreateOutput(L"Executed successfully: \n", GetColorValue(L"Success"));
+                CreateOutput(L"Execution failed: \n", GetColorValue(L"Error"));
 
                 if (!result.output.empty() && isTotalOutput) {
                     CreateOutput(L"Output: \n", GetColorValue(L"Info"));
@@ -219,35 +269,13 @@ int FileMain(const OpaqueData& data) {
                     CreateOutput(L"\n");
                 }
 
-                CreateOutput(L"Return value: \n", GetColorValue(L"Info"));
-                GMT processedText = GetCodeColor(result.message);
-                for (const auto& [codeSegment, colorType] : processedText) {
-                    CreateOutput(codeSegment + L"\n", TextLightColorValue[colorType]);
-                }
+                CreateOutput(L"Reason: \n", GetColorValue(L"Info"));
+                CreateOutput(result.errorFront + L":" + result.message + L"\n", GetColorValue(L"Error"));
+                OutputStack(result.errorStack);
 
                 CreateOutput(L"\n");
-
                 goto EndProcess;
             }
-        }
-        else {
-            CreateOutput(L"Execution failed: \n", GetColorValue(L"Error"));
-
-            if (!result.output.empty() && isTotalOutput) {
-                CreateOutput(L"Output: \n", GetColorValue(L"Info"));
-                for (const auto& [code, color] : result.output) {
-                    CreateOutput(code, color);
-                }
-                CreateOutput(L"\n");
-            }
-
-            CreateOutput(L"Reason: \n", GetColorValue(L"Info"));
-            CreateOutput(result.errorFront + L":" + result.message + L"\n", GetColorValue(L"Error"));
-            OutputStack(result.errorStack);
-
-            CreateOutput(L"\n");
-
-            goto EndProcess;
         }
 
     }
@@ -255,6 +283,7 @@ int FileMain(const OpaqueData& data) {
 EndProcess:;
 
     if (isAlwaysPauseWhenQuit && isConsoleEnv && console) system("pause");
+    
     js = nullptr;
     return EXIT_SUCCESS;
 }
@@ -561,12 +590,6 @@ int FastCgiMain(const OpaqueData& data, std::wstring startFilePath = L"") {
     return EXIT_SUCCESS;
 }
 
-const static std::unordered_map<std::wstring, std::wstring> supportArgList = {
-    {L"config", L""},
-    {L"extension", L""},
-    {L"new", L""},
-    {L"restarted", L""},
-};
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPWSTR lpCmdLine, _In_ int nCmdShow) {
 
     SetCurrentDirectoryW(apppath(0).c_str());
@@ -579,8 +602,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
 
     std::wstring tempOutput = L"";
     bool isDisabledConfig = false;
+    std::wstring customConfigPath = L"./config.json";
     bool isDisabledExtension = false;
-    bool isKeepWTMode = false;
+    std::wstring customExtensionPath = L"./Extension/";
     
     if (commandArgList.count(L"config")) {
         if (commandArgList[L"config"] == L"disabled") {
@@ -590,7 +614,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
             isDisabledConfig = false;
         }
         else {
-            tempOutput += L"Warning: The value '" + commandArgList[L"config"] + L"' of command line parameter '" + L"config" + L"' is invalid\n";
+            customConfigPath = commandArgList[L"config"];
         }
     }
     if (commandArgList.count(L"extension")) {
@@ -601,14 +625,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
             isDisabledExtension = false;
         }
         else {
-            tempOutput += L"Warning: The value '" + commandArgList[L"extension"] + L"' of command line parameter '" + L"extension" + L"' is invalid\n";
+            customExtensionPath = commandArgList[L"extension"];
         }
     }
-    if (commandArgList.count(L"new")) {
-        isKeepWTMode = true;
-        isWTConsole = true;
-    }
-
     configObject = {
         {L"fastcgi",{
             OBJECT{
@@ -640,7 +659,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
     };
 
     if (!isDisabledConfig) {
-        FileController* fc = NewInstance<FileController>(L"./config.json", apppath(0));
+        FileController* fc = NewInstance<FileController>(customConfigPath, apppath(0));
         if (fc == nullptr) goto ProcessConfigEnd;
         if (!fc->exists()) {
             goto ProcessConfigEnd;
@@ -662,7 +681,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
 ProcessConfigEnd:;
 
     if (!isDisabledExtension) {
-        FileController* fc = NewInstance<FileController>(L"./Extension/", apppath(0));
+        FileController* fc = NewInstance<FileController>(customExtensionPath, apppath(0));
         if (!fc->exists()) {
             delete fc;
             goto ProcessExtensionEnd;
@@ -671,7 +690,6 @@ ProcessConfigEnd:;
         delete fc;
     }
 ProcessExtensionEnd:;
-
 
     isStartByFastCgi = IsStartByFastCgi();
     updateConfig();
@@ -686,13 +704,68 @@ ProcessExtensionEnd:;
     data.cmdLineArgs = std::move(cmdLineArgs);
     data.scriptPath = commandStartFilePath;
 
-    //tempOutput = data.cmdLine;
+    if (commandArgList.count(L"ansi")) {
+        isConsoleAnsiSupportedLocked = true;
+        isConsoleAnsiSupported = true;
+    }
+    if (commandArgList.count(L"no-ansi")) {
+        isConsoleAnsiSupportedLocked = true;
+        isConsoleAnsiSupported = false;
+    }
+    if (commandArgList.count(L"v") || commandArgList.count(L"version")) {
+        arg_interactive = true;
+        arg_version = true;
+    }
+    if (commandArgList.count(L"native") || commandArgList.count(L"native-console")) {
+        arg_native = true;
+    }
+    if (commandArgList.count(L"q") || commandArgList.count(L"quiet")) {
+        arg_no_welcome = true;
+        arg_no_final_output = true;
+        arg_no_prompt = true;
+    }
+    if (commandArgList.count(L"no-welcome")) {
+        arg_no_welcome = true;
+    }
+    if (commandArgList.count(L"no-pause")) {
+        isAlwaysPauseWhenQuit = false;
+    }
+    if (commandArgList.count(L"no-final") || commandArgList.count(L"no-final-output")) {
+        arg_no_final_output = true;
+    }
+    if (commandArgList.count(L"no-console")) {
+        arg_no_console = true;
+    }
+    if (commandArgList.count(L"no-prompt")) {
+        arg_no_prompt = true;
+    }
+    if (commandArgList.count(L"i") || commandArgList.count(L"interactive")) {
+        arg_interactive = true;
+        data.preEval = LR"(
+        window._preEval_hasScript = window?.script && script[Symbol.toStringTag] === 'Script';
+        if (!window._preEval_hasScript) include('cjs:script');
+        script.include(`)" + ReplaceWithin(commandStartFilePath) + LR"(`);
+        if (!window._preEval_hasScript) delete window.script;
+        delete window._preEval_hasScript;
+    )";
+    }
+    if (commandArgList.count(L"e")) {
+        arg_interactive = true;
+        data.preEval = commandArgList[L"e"];
+    }
+    if (commandArgList.count(L"eval")) {
+        arg_interactive = true;
+        data.preEval = commandArgList[L"eval"];
+    }
+    if (commandArgList.count(L"strict") || commandArgList.count(L"strict-mode")) {
+        data.arg_eval_flag |= JS_EVAL_FLAG_STRICT;
+    }
 
     int result = 0;
-    if (isStartByFastCgi){
+    if (!arg_interactive && isStartByFastCgi){
         result = FastCgiMain(data, commandStartFilePath);
     }
-    else if (!commandStartFilePath.empty()) {
+    else if (!arg_interactive && !commandStartFilePath.empty()) {
         errorOutput = tempOutput;
         result = FileMain(data);
     }

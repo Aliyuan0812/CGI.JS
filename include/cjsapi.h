@@ -31,7 +31,7 @@ extern "C" {
     CAEXP CJSVERSION cjs_versionExchanger() {
         return ver;
     }
-    CAENTRY cjs_main(void* info) {
+    CAENTRY cjs_main(CJSContext info) {
 
         hm = GetModuleHandleW(NULL);
 
@@ -1260,8 +1260,8 @@ extern "C" {
      * @param in_argumentValues 传入的参数数组指针。
      * @return 任务ID。
      */
-    CJSID CJS_EnqueueTask(CJSValue in_task, CJSValue in_this, cjs_int in_argumentCount, CJSValue* in_argumentValues) {
-        static type_cjs_EnqueueTask f = (type_cjs_EnqueueTask)GetProcAddress(hm, "cjs_EnqueueTask");
+    CJSID CJS_AddTask(CJSValue in_task, CJSValue in_this, cjs_int in_argumentCount, CJSValue* in_argumentValues) {
+        static type_cjs_AddTask f = (type_cjs_AddTask)GetProcAddress(hm, "cjs_AddTask");
         CJS_Assert(f && "方法不可用");
         return f(ctx, in_task, in_this, in_argumentCount, in_argumentValues);
     }
@@ -1293,6 +1293,26 @@ extern "C" {
         static type_cjs_RunTask f = (type_cjs_RunTask)GetProcAddress(hm, "cjs_RunTask");
         CJS_Assert(f && "方法不可用");
         return f(ctx);
+    }
+    /**
+     * @brief 向任务队列中添加一个待执行的原生任务。
+     * @param in_task 任务原生函数。
+     * @return 任务ID。
+     */
+    CJSID CJS_AddNativeTask(CJSVoid* in_opaque, CJSNativeTask in_task) {
+        static type_cjs_AddNativeTask f = (type_cjs_AddNativeTask)GetProcAddress(hm, "cjs_AddNativeTask");
+        CJS_Assert(f && "方法不可用");
+        return f(ctx, in_opaque, in_task);
+    }
+    /**
+     * @brief 向任务队列中添加一个待执行的原生任务。
+     * @param in_task 任务原生函数。
+     * @return 任务ID。
+     */
+    CJSBool CJS_AddAsyncTask(CJSVoid* in_opaque, CJSNativeTask in_task) {
+        static type_cjs_AddAsyncTask f = (type_cjs_AddAsyncTask)GetProcAddress(hm, "cjs_AddAsyncTask");
+        CJS_Assert(f && "方法不可用");
+        return f(ctx, in_opaque, in_task);
     }
 
 

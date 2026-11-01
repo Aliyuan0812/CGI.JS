@@ -1,11 +1,12 @@
+
 # CGI.JS-Windows API 参考文档
 > 本文档仅对解释器宿主扩展 API 进行详细说明；其余原生语言接口均遵循 ECMAScript 规范。
 >
-> 解释器版本: v3.6.20261029.01。接口行为会受运行环境影响，实际表现请以本地测试结果为准。
+> 解释器版本: v3.7.20261101.01。接口行为会受运行环境影响，实际表现请以本地测试结果为准。
 >
-> 文档最后更新: 2026 年 10 月 29 日。
+> 文档最后更新: 2026 年 11 月 01 日。
 
-## 说明
+## 前置说明
 
 > 本解释器既可以使用浏览器风格
 > ```js
@@ -50,6 +51,32 @@
 >
 > 本解释器的宿主API具有强入参校验，传入参数类型或数量异常可能会抛出异常。
 >
+
+---
+
+## 支持的启动参数
+
+| 短参数 | 长参数 | 功能 |
+| :- | :- | :- |
+| | `--config=true` | (默认) 启用配置文件。 |
+| | `--config=false` | 禁用配置文件。 |
+| | `--config="${path}"` | 使用指定的配置文件。 |
+| | `--extension=true` | (默认) 启用扩展功能。 |
+| | `--extension=false` | 禁用扩展功能。 |
+| | `--extension="${dir}"` | 使用指定的扩展目录。 |
+| | `--no-welcome` | 不输出欢迎语句。 |
+| | `--no-pause` | 禁用程序自动退出前的暂停功能。 |
+| | `--no-final-output` | 在文件模式下不输出脚本执行的最终数据。 |
+| | `--no-console` | 在文件模式下不显示控制台。 |
+| | `--no-prompt` | 不输出 `cjs>` 输入提示。 |
+| `-v` | `--version` | 仅输出版本号后退出。 |
+| `-native` | `--native-console` | 使用原生分配的控制台而不是系统委派的控制台。 |
+| `-ansi-on` | `--ansi-output-enabled` | 强制启用 ANSI 转义颜色输出 (而非根据实际控制台能力判断)。 |
+| `-ansi-off` | `--ansi-output-disabled` | 强制禁用 ANSI 转义颜色输出 (而非根据实际控制台能力判断)。 |
+| `-q` | `--quiet` | 等价 `-no-welcome -no-final -no-prompt` 组合。 |
+| `-i` | `--interactive` | 无论在什么模式（不包括 FCGI 模式）最终一定进入交互式模式。 |
+| `-e` | `--eval` | 在交互式模式下直接执行后跟的一行 JS 代码。 |
+| `-strict` | `--strict-mode` | 强制启用JS严格模式。 |
 
 ---
 
@@ -1572,7 +1599,7 @@
   如果函数成功，则返回一个文件控制器对象。返回值的结构如下：
   ```js
   {
-      id: String,
+      id: BigInt,
       mode: String,
       name: String,
       closed: Boolean,
@@ -1588,7 +1615,7 @@
   ```
   `id`
 
-  类型: **String**
+  类型: **BigInt**
 
   文件控制器的内部标识。
 
@@ -2300,6 +2327,148 @@
   | 所属模块 | script |
   | 可用性 | 全局可用 |
   | 位置 | script.include |
+
+  ---
+
+  ## compile 函数
+  将JS代码编译为字节码。
+
+  ### 语法
+  ```js
+  script.compile(js: String) : FunctionByteCode
+  ```
+
+  ### 参数
+  `js`
+
+  类型: **String**
+
+  一段JS代码。
+
+  ### 返回值
+  类型: **FunctionByteCode**
+
+  编译后的不透明字节码对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  &bull; 未传入任何参数。
+
+  &bull; 第一个参数不是字符串。
+
+  &bull; 编译失败。
+
+  ### 备注
+  **compile** 函数会将传入的JS代码编译为字节码，此过程只做语法检查而不会去实际执行代码，返回编译后的不透明的字节码对象。有关如何执行字节码对象，请参阅 [script.run](#run-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **compile**。
+  ```js
+  script.compile('console.log("Hello World!")');
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v3.7.20261101.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | script |
+  | 可用性 | 全局可用 |
+  | 位置 | script.compile |
+
+  ---
+
+  ## run 函数
+  执行字节码。
+
+  ### 语法
+  ```js
+  script.run(functionByteCode) : Promise<any>
+  ```
+
+  ### 参数
+  `functionByteCode`
+
+  类型: **FunctionByteCode**
+
+  由 `script.compile` 编译成功得到的字节码对象。
+
+  ### 返回值
+  类型: **any**
+
+  字节码对象的执行状态，等价使用 `window.eval` 执行编译该字节码的JS代码。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  &bull; 未传入任何参数。
+
+  &bull; 第一个参数不是字节码对象。
+  
+  &bull; 执行时出现错误。
+
+  ### 备注
+  **run** 函数会执行传入的字节码，等价于执行编译该字节码的JS代码，其高效性与不变性让其能够很好的发挥性。有关如何获得字节码对象，请参阅 [script.compile](#compile-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **run**。
+  ```js
+c
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v3.7.20261101.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | script |
+  | 可用性 | 全局可用 |
+  | 位置 | script.run |
+
+  ---
+
+  ## validate 函数
+  验证字节码是否有效。
+
+  ### 语法
+  ```js
+  script.validate(functionByteCode) : Boolean
+  ```
+
+  ### 参数
+  `functionByteCode`
+
+  类型: **FunctionByteCode**
+
+  由 `script.compile` 编译成功得到的字节码对象。
+
+  ### 返回值
+  类型: **Boolean**
+
+  字节码的有效性，如果字节码有效，则返回 **true**，否则返回 **false**。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  &bull; 未传入任何参数。
+
+  ### 备注
+  **validate** 函数会检查传入的参数是不是有效的字节码对象，但是不担保其在执行过程中不会出现错误。有关执行过程中的错误处理，请参阅 [script.run](#run-函数)，有关如何获得字节码对象，请参阅 [script.compile](#compile-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **validate**。
+  ```js
+  const bytecode = script.compile('1+1');
+  const valid = script.validate(bytecode);
+  console.log(valid); //输出 true
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v3.7.20261101.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | script |
+  | 可用性 | 全局可用 |
+  | 位置 | script.validate |
 
   ---
 
