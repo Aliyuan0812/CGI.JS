@@ -134,7 +134,7 @@ extern "C" {
         return f(ctx);
     }
     /**
-     * @brief 创建新的JS函数（完整参数版）。
+     * @brief 创建新的JS函数（完整）。
      * @param in_name 函数名称。
      * @param in_func 函数体。
      * @param argLength 参数长度。
@@ -153,6 +153,37 @@ extern "C" {
      */
     CJSValue CJS_NewFunction(cjs_string in_name, cjs_function in_func) {
         return CJS_NewFunctionFull(in_name, in_func, -1);
+    }
+    /**
+     * @brief 创建新的JS闭包函数(完整)。
+     * @param in_name 函数名称。
+     * @param in_func 函数体。
+     * @param argLength 参数长度。
+     * @return JS值(Function)。
+     */
+    CJSValue CJS_NewClosureFunctionFull(cjs_string in_name, cjs_function in_func, int magic, void* opaque, JSCClosureFinalizerFunc onrelease, cjs_int argLength) {
+        static type_cjs_NewClosureFunction f = (type_cjs_NewClosureFunction)GetProcAddress(hm, "cjs_NewClosureFunction");
+        CJS_Assert(f && "方法不可用");
+        return f(ctx, in_name, in_func, argLength);
+    }
+    /**
+     * @brief 创建新的JS闭包函数(2)。
+     * @param in_name 函数名称。
+     * @param in_func 函数体。
+     * @param argLength 参数长度。
+     * @return JS值(Function)。
+     */
+    CJSValue CJS_NewClosureFunction2(cjs_string in_name, cjs_function in_func, int magic, void* opaque, JSCClosureFinalizerFunc onrelease) {
+        return CJS_NewClosureFunctionFull(in_name, in_func, magic, opaque, onrelease, 0);
+    }
+    /**
+     * @brief 创建新的JS闭包函数。
+     * @param in_name 函数名称。
+     * @param in_func 函数体。
+     * @return JS值(Function)。
+     */
+    CJSValue CJS_NewClosureFunction(cjs_string in_name, cjs_function in_func, int magic) {
+        return CJS_NewClosureFunction2(in_name, in_func, magic, nullptr, nullptr);
     }
     /**
     * @brief 创建新的JS布尔值。

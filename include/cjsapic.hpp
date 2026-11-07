@@ -118,6 +118,10 @@ extern "C" {
         JSContext* ctx = (JSContext*)in_ctx;
         return jsm::GetCJSValue(ctx, jsm::NewArray(ctx, {}));
     }
+    CAEXP CJSValue cjs_NewClosureFunction(CJSContext in_ctx, cjs_string in_name, cjs_closureFunction in_func, int magic = 0, void* opaque = nullptr, JSCClosureFinalizerFunc onrelease = nullptr, cjs_int argLength = 0) {
+        JSContext* ctx = (JSContext*)in_ctx;
+        return jsm::GetCJSValue(ctx, jsm::NewFunction(ctx, (in_name), in_func, magic, opaque, onrelease, argLength));
+    }
     CAEXP CJSValue cjs_NewFunction(CJSContext in_ctx, cjs_string in_name, cjs_function in_func, cjs_int argLength = -1) {
         JSContext* ctx = (JSContext*)in_ctx;
         return jsm::GetCJSValue(ctx, jsm::NewFunction(ctx, (in_name), in_func, argLength));

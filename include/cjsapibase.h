@@ -38,7 +38,11 @@ extern "C" {
     typedef long long cjs_int64, CJSInt64;
     typedef int cjs_int32, CJSInt32;
     typedef int cjs_int, CJSInt;
+#ifdef __cplusplus
     typedef bool cjs_bool, CJSBool;
+#else
+    typedef _Bool cjs_bool, CJSBool;
+#endif
     typedef unsigned char cjs_byte, CJSByte;
     typedef unsigned long long cjs_size, CJSSize;
     typedef const char* cjs_string, * CJSString;
@@ -76,8 +80,10 @@ extern "C" {
     typedef CJSValue(CACALL* type_cjs_NewUint64)(CJSContext, cjs_uint64);
     typedef CJSValue(CACALL* type_cjs_NewObject)(CJSContext);
     typedef type_cjs_NewObject type_cjs_NewArray;
-    typedef JSCFunction cjs_function;
+    typedef JSCFunction cjs_function, CJSFunction;
+    typedef JSCClosure cjs_closureFunction, CJSClosureFunction;
     typedef CJSValue(CACALL* type_cjs_NewFunction)(CJSContext, cjs_string, cjs_function, cjs_int);
+    typedef CJSValue(CACALL* type_cjs_NewClosureFunction)(CJSContext, cjs_string, cjs_closureFunction, int, void*, JSCClosureFinalizerFunc, cjs_int);
     typedef cjs_bool(CACALL* type_cjs_FreeCJSValue)(CJSContext, CJSValue);
     typedef cjs_bool(CACALL* type_cjs_FreeAllCJSValue)(CJSContext);
     typedef cjs_bool(CACALL* type_cjs_SetProperty)(CJSContext, CJSValue, CJSValue, CJSValue, cjs_int64);

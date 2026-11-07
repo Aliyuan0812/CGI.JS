@@ -1572,6 +1572,292 @@
 
   ---
 
+  ## isFile 函数
+  判断指定路径是否是文件。
+
+  ### 语法
+  ```js
+  filesystem.isFile(path: String) : Boolean
+  ```
+
+  ### 参数
+  `path`
+
+  类型: **String**
+
+  需要判断的路径。相对路径基于当前上下文的工作目录解析。
+
+  ### 返回值
+  类型: **Boolean**
+
+  如果路径存在且是文件，则返回 **true**。
+
+  如果路径不存在或者不是文件，则返回 **false**。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  &bull; 传入参数的数量不为 **1**。
+
+  &bull; `path` 不是字符串。
+
+  ### 例
+  以下示例代码演示如何使用 **isFile**。
+  ```js
+  include('cjs:filesystem');
+
+  console.log(filesystem.isFile('./demo.txt')); //输出 true
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | filesystem |
+  | 可用性 | 全局可用 |
+  | 位置 | filesystem.isFile |
+
+  ---
+
+  ## isFolder 函数
+  判断指定路径是否是文件夹。
+
+  ### 语法
+  ```js
+  filesystem.isFolder(path: String) : Boolean
+  ```
+
+  ### 参数
+  `path`
+
+  类型: **String**
+
+  需要判断的路径。相对路径基于当前上下文的工作目录解析。
+
+  ### 返回值
+  类型: **Boolean**
+
+  如果路径存在且是文件，则返回 **true**。
+
+  如果路径不存在或者不是文件，则返回 **false**。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  &bull; 传入参数的数量不为 **1**。
+
+  &bull; `path` 不是字符串。
+
+  ### 例
+  以下示例代码演示如何使用 **isFolder**。
+  ```js
+  include('cjs:filesystem');
+
+  console.log(filesystem.isFolder('./demo.txt')); //输出 false
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | filesystem |
+  | 可用性 | 全局可用 |
+  | 位置 | filesystem.isFolder |
+
+  ---
+
+  ## getNameFromPath 函数
+  从路径中提取文件/文件夹名。
+
+  ### 语法
+  ```js
+  filesystem.getNameFromPath(path: String) : String
+  ```
+
+  ### 参数
+  `path`
+
+  类型: **String**
+
+  需要处理的路径。相对路径基于当前上下文的工作目录解析。
+
+  ### 返回值
+  类型: **String**
+
+  文件/文件夹名
+
+  此函数通常因以下原因之一而抛出异常:
+
+  &bull; 传入参数的数量不为 **1**。
+
+  &bull; `path` 不是字符串。
+
+  ### 备注
+  **getNameFromPath** 函数不会访问磁盘，而是通过纯词法操作实现。
+
+  ### 例
+  以下示例代码演示如何使用 **getNameFromPath**。
+  ```js
+  include('cjs:filesystem');
+
+  console.log(filesystem.getNameFromPath('./demo.txt')); //输出 demo.txt
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | filesystem |
+  | 可用性 | 全局可用 |
+  | 位置 | filesystem.getNameFromPath |
+
+  ---
+
+  ## formatPath 函数
+  格式化路径。
+
+  ### 语法
+  ```js
+  filesystem.formatPath(path: String) : String
+  ```
+
+  ### 参数
+  `path`
+
+  类型: **String**
+
+  需要处理的路径。相对路径基于当前上下文的工作目录解析。
+
+  ### 返回值
+  类型: **String**
+
+  格式化后的路径
+
+  此函数通常因以下原因之一而抛出异常:
+
+  &bull; 传入参数的数量不为 **1**。
+
+  &bull; `path` 不是字符串。
+
+  ### 备注
+  **formatPath** 函数不会访问磁盘，而是通过纯词法操作实现，将反斜杠替换为正斜杠，规范化相对路径。
+
+  ### 例
+  以下示例代码演示如何使用 **formatPath**。
+  ```js
+  include('cjs:filesystem');
+
+  console.log(filesystem.formatPath('efg\\abcd/demo.txt')); //输出 ./efg/abcd/demo.txt
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | filesystem |
+  | 可用性 | 全局可用 |
+  | 位置 | filesystem.formatPath |
+
+  ---
+
+  ## formatToAbsolutePath 函数
+  将相对路径转换为绝对路径。
+
+  ### 语法
+  ```js
+  filesystem.formatToAbsolutePath(path: String) : String
+  ```
+
+  ### 参数
+  `path`
+
+  类型: **String**
+
+  需要处理的路径。相对路径基于当前上下文的工作目录解析。
+
+  ### 返回值
+  类型: **String**
+
+  处理后的路径
+
+  此函数通常因以下原因之一而抛出异常:
+
+  &bull; 传入参数的数量不为 **1**。
+
+  &bull; `path` 不是字符串。
+
+  ### 备注
+  **formatToAbsolutePath** 函数不会访问磁盘，而是通过纯词法操作实现，将相对路径按照当前工作目录生成为绝对路径并调用 `filesystem.formatPath` 格式化处理路径。有关格式化的行为，请参阅 [filesystem.formatPath](#formatpath-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **formatToAbsolutePath**。
+  ```js
+  include('cjs:filesystem');
+
+  console.log(filesystem.formatToAbsolutePath('efg\\abcd/demo.txt')); //输出 C:/workDirectory/efg/abcd/demo.txt
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | filesystem |
+  | 可用性 | 全局可用 |
+  | 位置 | filesystem.formatToAbsolutePath |
+
+  ---
+
+  ## formatToRelativePath 函数
+  将绝对路径转换为相对路径。
+
+  ### 语法
+  ```js
+  filesystem.formatToRelativePath(path: String) : String
+  ```
+
+  ### 参数
+  `path`
+
+  类型: **String**
+
+  需要处理的路径。相对路径基于当前上下文的工作目录解析。
+
+  ### 返回值
+  类型: **String**
+
+  处理后的路径
+
+  此函数通常因以下原因之一而抛出异常:
+
+  &bull; 传入参数的数量不为 **1**。
+
+  &bull; `path` 不是字符串。
+
+  ### 备注
+  **formatToRelativePath** 函数不会访问磁盘，而是通过纯词法操作实现，将绝对路径按照当前工作目录生成为相对路径并调用 `filesystem.formatPath` 格式化处理路径，如果生成失败则返回 **null**。有关格式化的行为，请参阅 [filesystem.formatPath](#formatpath-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **formatToRelativePath**。
+  ```js
+  include('cjs:filesystem');
+
+  console.log(filesystem.formatToRelativePath('C:/workDirectory/efg\\abcd/demo.txt')); //输出 ./efg/abcd/demo.txt
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | filesystem |
+  | 可用性 | 全局可用 |
+  | 位置 | filesystem.formatToRelativePath |
+
+  ---
+
   ## open 函数
   打开文件并返回文件控制器对象。
 
@@ -1599,7 +1885,6 @@
   如果函数成功，则返回一个文件控制器对象。返回值的结构如下：
   ```js
   {
-      id: BigInt,
       mode: String,
       name: String,
       closed: Boolean,
@@ -1613,11 +1898,6 @@
       seek: Function
   }
   ```
-  `id`
-
-  类型: **BigInt**
-
-  文件控制器的内部标识。
 
   `mode`
 
@@ -1812,7 +2092,7 @@
   &bull; 以读模式打开时文件不存在。
 
   ### 备注
-  **open** 函数在写模式且非追加模式下会清空文件内容；在读模式下要求文件必须存在。返回的文件控制器对象中，`read` 方法仅在读模式或读写模式下存在，`write` 方法仅在写模式、读写模式或追加模式下存在，`close`、`tell`、`size`、`seek` 始终存在。**open** 函数的返回值支持使用 ```using``` 关键字以实现自动关闭资源。
+  **open** 函数在写模式且非追加模式下会清空文件内容；在读模式下要求文件必须存在。返回的文件控制器对象中，`read` 方法仅在读模式或读写模式下存在，`write` 方法仅在写模式、读写模式或追加模式下存在，`close`、`tell`、`size`、`seek` 始终存在。**open** 函数的返回值支持使用 `using` 关键字以实现自动关闭资源。
 
   ### 例
   以下示例代码演示如何使用 **open**。
@@ -2250,7 +2530,7 @@
   &bull; 执行脚本文件时发生错误。
 
   ### 备注
-  **execute** 函数会创建一个新的 JavaScript 上下文，其父上下文为当前上下文。若提供了 `path`，则读取该文件并在新上下文中执行。返回的全局对象可用于在新上下文中求值或调用 **this_close** 关闭上下文。未提供 `path` 时，仅创建新上下文并返回其全局对象。**execute** 函数的返回值支持使用 ```using``` 关键字以实现自动关闭上下文。
+  **execute** 函数会创建一个新的 JavaScript 上下文，其父上下文为当前上下文。若提供了 `path`，则读取该文件并在新上下文中执行。返回的全局对象可用于在新上下文中求值或调用 **this_close** 关闭上下文。未提供 `path` 时，仅创建新上下文并返回其全局对象。**execute** 函数的返回值支持使用 `using` 关键字以实现自动关闭上下文。
 
   ### 例
   以下示例代码演示如何使用 **execute**。
@@ -3458,7 +3738,7 @@ c
 
   类型: **Boolean**
 
-  可选。是否使用异步请求。默认为 **true**。
+  可选。是否使用异步请求。默认为 **true**。值得注意的是同步请求已被废弃。
 
   `[username]`
 
@@ -3478,7 +3758,6 @@ c
   如果函数成功，则返回一个 XMLHttpRequest 对象。返回值的结构如下：
   ```js
   {
-      id: BigInt,
       isAsync: Boolean,
       UNSENT: Number,
       OPENED: Number,
@@ -3510,11 +3789,6 @@ c
       close: Function
   }
   ```
-  `id`
-
-  类型: **BigInt**
-
-  当前 XMLHttpRequest 实例的内部标识。
 
   `isAsync`
 
@@ -3653,7 +3927,7 @@ c
   &bull; 创建 XMLHttpRequest 失败。
 
   ### 备注
-  **open** 函数会创建一个 XMLHttpRequest 对象并立即调用其内部 `open` 方法，同时设置默认的请求状态、响应属性以及各事件的默认回调。返回的对象支持常见的 XHR 属性与事件回调，可对其进行进一步配置并调用 **send** 发起请求。**open** 函数的返回值支持使用 ```using``` 关键字以实现自动关闭资源。值得注意的是，如果使用 ```using``` 关键字实现自动关闭资源，需要保证其作用域不会在请求过程中离开，否则请求将终止。
+  **open** 函数会创建一个 XMLHttpRequest 对象并立即调用其内部 `open` 方法，同时设置默认的请求状态、响应属性以及各事件的默认回调。返回的对象支持常见的 XHR 属性与事件回调，可对其进行进一步配置并调用 **send** 发起请求。**open** 函数的返回值支持使用 `using` 关键字以实现自动关闭资源。值得注意的是，如果使用 `using` 关键字实现自动关闭资源，需要保证其作用域不会在请求过程中离开，否则请求将终止。
 
   ### 例
   以下示例代码演示如何使用 **http.open**。
@@ -5013,5 +5287,1439 @@ c
   | 位置 | crypto.subtle.generateKey |
 
   ---
+
+# navigator.dll 对象
+
+  ## void 函数
+  创建 **void** 类型对象。
+
+  ### 语法
+  ```js
+  navigator.dll.void() : TypeVoid
+  ```
+
+  ### 参数
+  无
+
+  ### 返回值
+  类型: **TypeVoid**
+
+  如果函数成功，则返回类型对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  &bull; 传入参数的数量不等于 **0**。
+
+  ### 备注
+  **void** 会创建一个无类型类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **void**。
+  ```js
+  const vd = navigator.dll.void();
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.voidPtr |
+
+---
+
+  ## voidPtr 函数
+  创建 **void\*** 类型对象。
+
+  ### 语法
+  ```js
+  navigator.dll.voidPtr([value: BigInt]) : TypeVoidPtr
+  ```
+
+  ### 参数
+  `[value]`
+
+  类型: **BigInt**
+
+  指针地址。
+
+  ### 返回值
+  类型: **TypeVoidPtr**
+
+  如果函数成功，则返回类型对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  &bull; 传入参数的数量大于 **1**。
+
+  &bull; `value` 不是 **BigInt**。
+
+  ### 备注
+  **voidPtr** 会创建一个无类型指针类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **voidPtr**。
+  ```js
+  const nullptr = navigator.dll.voidPtr(BigInt(0));
+  const nullptrDefault = navigator.dll.voidPtr();
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.voidPtr |
+
+  ---
+
+  ## unsignedLongLong 函数
+  创建 **unsigned long long** 类型对象。
+
+  ### 语法
+  ```js
+  navigator.dll.unsignedLongLong([value: BigInt]) : TypeUnsignedLongLong
+  ```
+
+  ### 参数
+  `[value]`
+
+  类型: **BigInt**
+
+  指针地址。
+
+  ### 返回值
+  类型: **TypeUnsignedLongLong**
+
+  如果函数成功，则返回类型对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  &bull; 传入参数的数量大于 **1**。
+
+  &bull; `value` 不是 **BigInt**。
+
+  ### 备注
+  **unsignedLongLong** 会创建一个无符号长长整型类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **unsignedLongLong**。
+  ```js
+  const ull0 = navigator.dll.unsignedLongLong(BigInt(0));
+  const ull0Default = navigator.dll.unsignedLongLong();
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.unsignedLongLong |
+
+  ---
+
+  # unsignedLong 函数
+  创建 **unsigned long** 类型对象。
+
+  ### 语法
+  ```js
+  navigator.dll.unsignedLong([value: BigInt]) : TypeUnsignedLong
+  ```
+
+  ### 参数
+  `[value]`
+
+  类型: **BigInt**
+
+  无符号长整型数值。
+
+  ### 返回值
+  类型: **TypeUnsignedLong**
+
+  如果函数成功，则返回类型对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量大于 **1**。
+  - `value` 不是 **BigInt**。
+
+  ### 备注
+  **unsignedLong** 会创建一个无符号长整型类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **unsignedLong**。
+  ```js
+  const ul0 = navigator.dll.unsignedLong(BigInt(0));
+  const ul0Default = navigator.dll.unsignedLong();
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.unsignedLong |
+
+  ---
+
+  # unsignedInt 函数
+  创建 **unsigned int** 类型对象。
+
+  ### 语法
+  ```js
+  navigator.dll.unsignedInt([value: BigInt]) : TypeUnsignedInt
+  ```
+
+  ### 参数
+  `[value]`
+
+  类型: **BigInt**
+
+  无符号整型数值。
+
+  ### 返回值
+  类型: **TypeUnsignedInt**
+
+  如果函数成功，则返回类型对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量大于 **1**。
+  - `value` 不是 **BigInt**。
+
+  ### 备注
+  **unsignedInt** 会创建一个无符号整型类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **unsignedInt**。
+  ```js
+  const ui0 = navigator.dll.unsignedInt(BigInt(0));
+  const ui0Default = navigator.dll.unsignedInt();
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.unsignedInt |
+
+  ---
+
+  # long 函数
+  创建 **long** 类型对象。
+
+  ### 语法
+  ```js
+  navigator.dll.long([value: BigInt]) : TypeLong
+  ```
+
+  ### 参数
+  `[value]`
+
+  类型: **BigInt**
+
+  长整型数值。
+
+  ### 返回值
+  类型: **TypeLong**
+
+  如果函数成功，则返回类型对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量大于 **1**。
+  - `value` 不是 **BigInt**。
+
+  ### 备注
+  **long** 会创建一个长整型类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **long**。
+  ```js
+  const l0 = navigator.dll.long(BigInt(0));
+  const l0Default = navigator.dll.long();
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.long |
+
+  ---
+
+  # longLong 函数
+  创建 **long long** 类型对象。
+
+  ### 语法
+  ```js
+  navigator.dll.longLong([value: BigInt]) : TypeLongLong
+  ```
+
+  ### 参数
+  `[value]`
+
+  类型: **BigInt**
+
+  长整型数值。
+
+  ### 返回值
+  类型: **TypeLongLong**
+
+  如果函数成功，则返回类型对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量大于 **1**。
+  - `value` 不是 **BigInt**。
+
+  ### 备注
+  **longLong** 会创建一个长长整型类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **longLong**。
+  ```js
+  const l0 = navigator.dll.longLong(BigInt(0));
+  const l0Default = navigator.dll.longLong();
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.longLong |
+
+  ---
+
+  # int 函数
+  创建 **int** 类型对象。
+
+  ### 语法
+  ```js
+  navigator.dll.int([value: BigInt]) : TypeInt
+  ```
+
+  ### 参数
+  `[value]`
+
+  类型: **BigInt**
+
+  整型数值。
+
+  ### 返回值
+  类型: **TypeInt**
+
+  如果函数成功，则返回类型对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量大于 **1**。
+  - `value` 不是 **BigInt**。
+
+  ### 备注
+  **int** 会创建一个整型类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **int**。
+  ```js
+  const i0 = navigator.dll.int(BigInt(0));
+  const i0Default = navigator.dll.int();
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.int |
+
+  ---
+
+  # float 函数
+  创建 **float** 类型对象。
+
+  ### 语法
+  ```js
+  navigator.dll.float([value: number]) : TypeFloat
+  ```
+
+  ### 参数
+  `[value]`
+
+  类型: **number**
+
+  单精度浮点数值。
+
+  ### 返回值
+  类型: **TypeFloat**
+
+  如果函数成功，则返回类型对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量大于 **1**。
+  - `value` 不是 **number**。
+
+  ### 备注
+  **float** 会创建一个单精度浮点类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **float**。
+  ```js
+  const f0 = navigator.dll.float(0.0);
+  const f0Default = navigator.dll.float();
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.float |
+
+  ---
+
+  # double 函数
+  创建 **double** 类型对象。
+
+  ### 语法
+  ```js
+  navigator.dll.double([value: number]) : TypeDouble
+  ```
+
+  ### 参数
+  `[value]`
+
+  类型: **number**
+
+  双精度浮点数值。
+
+  ### 返回值
+  类型: **TypeDouble**
+
+  如果函数成功，则返回类型对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量大于 **1**。
+  - `value` 不是 **number**。
+
+  ### 备注
+  **double** 会创建一个双精度浮点类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **double**。
+  ```js
+  const d0 = navigator.dll.double(0.0);
+  const d0Default = navigator.dll.double();
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.double |
+
+  ---
+
+  # char 函数
+  创建 **char** 类型对象。
+
+  ### 语法
+  ```js
+  navigator.dll.char([value: BigInt]) : TypeChar
+  ```
+
+  ### 参数
+  `[value]`
+
+  类型: **BigInt**
+
+  字符对应的字节数值。
+
+  ### 返回值
+  类型: **TypeChar**
+
+  如果函数成功，则返回类型对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量大于 **1**。
+  - `value` 不是 **BigInt**。
+
+  ### 备注
+  **char** 会创建一个字符类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **char**。
+  ```js
+  const c0 = navigator.dll.char(BigInt(65));
+  const c0Default = navigator.dll.char();
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.char |
+
+  ---
+
+  # unsignedChar 函数
+  创建 **unsigned char** 类型对象。
+
+  ### 语法
+  ```js
+  navigator.dll.unsignedChar([value: BigInt]) : TypeUnsignedChar
+  ```
+
+  ### 参数
+  `[value]`
+
+  类型: **BigInt**
+
+  无符号字符字节数值。
+
+  ### 返回值
+  类型: **TypeUnsignedChar**
+
+  如果函数成功，则返回类型对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量大于 **1**。
+  - `value` 不是 **BigInt**。
+
+  ### 备注
+  **unsignedChar** 会创建一个无符号字符类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **unsignedChar**。
+  ```js
+  const uc0 = navigator.dll.unsignedChar(BigInt(65));
+  const uc0Default = navigator.dll.unsignedChar();
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.unsignedChar |
+
+  ---
+
+  # short 函数
+  创建 **short** 类型对象。
+
+  ### 语法
+  ```js
+  navigator.dll.short([value: BigInt]) : TypeShort
+  ```
+
+  ### 参数
+  `[value]`
+
+  类型: **BigInt**
+
+  短整型数值。
+
+  ### 返回值
+  类型: **TypeShort**
+
+  如果函数成功，则返回类型对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量大于 **1**。
+  - `value` 不是 **BigInt**。
+
+  ### 备注
+  **short** 会创建一个短整型类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **short**。
+  ```js
+  const s0 = navigator.dll.short(BigInt(0));
+  const s0Default = navigator.dll.short();
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.short |
+
+  ---
+
+  # unsignedShort 函数
+  创建 **unsigned short** 类型对象。
+
+  ### 语法
+  ```js
+  navigator.dll.unsignedShort([value: BigInt]) : TypeUnsignedShort
+  ```
+
+  ### 参数
+  `[value]`
+
+  类型: **BigInt**
+
+  无符号短整型数值。
+
+  ### 返回值
+  类型: **TypeUnsignedShort**
+
+  如果函数成功，则返回类型对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量大于 **1**。
+  - `value` 不是 **BigInt**。
+
+  ### 备注
+  **unsignedShort** 会创建一个无符号短整型类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **unsignedShort**。
+  ```js
+  const us0 = navigator.dll.unsignedShort(BigInt(0));
+  const us0Default = navigator.dll.unsignedShort();
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.unsignedShort |
+
+  ---
+
+  # longDouble 函数
+  创建 **long double** 类型对象。
+
+  ### 语法
+  ```js
+  navigator.dll.longDouble([value: number]) : TypeLongDouble
+  ```
+
+  ### 参数
+  `[value]`
+
+  类型: **number**
+
+  长双精度浮点数值。
+
+  ### 返回值
+  类型: **TypeLongDouble**
+
+  如果函数成功，则返回类型对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量大于 **1**。
+  - `value` 不是 **number**。
+
+  ### 备注
+  **longDouble** 会创建一个长双精度浮点类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **longDouble**。
+  ```js
+  const ld0 = navigator.dll.longDouble(0.0);
+  const ld0Default = navigator.dll.longDouble();
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.longDouble |
+
+  ---
+
+  # wcharT 函数
+  创建 **wchar_t** 类型对象。
+
+  ### 语法
+  ```js
+  navigator.dll.wcharT([value: BigInt]) : TypeWcharT
+  ```
+
+  ### 参数
+  `[value]`
+
+  类型: **BigInt**
+
+  宽字符编码数值。
+
+  ### 返回值
+  类型: **TypeWcharT**
+
+  如果函数成功，则返回类型对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量大于 **1**。
+  - `value` 不是 **BigInt**。
+
+  ### 备注
+  **wcharT** 会创建一个宽字符类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **wcharT**。
+  ```js
+  const wc0 = navigator.dll.wcharT(BigInt(65));
+  const wc0Default = navigator.dll.wcharT();
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.wcharT |
+
+  ---
+
+  # wcharTPtr 函数
+  创建 **wchar_t*** 类型对象。
+
+  ### 语法
+  ```js
+  navigator.dll.wcharTPtr([value: string]) : TypeWcharTPtr
+  ```
+
+  ### 参数
+  `[value]`
+
+  类型: **string**
+
+  宽字符串。
+
+  ### 返回值
+  类型: **TypeWcharTPtr**
+
+  如果函数成功，则返回类型对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量大于 **1**。
+  - `value` 不是 **string**。
+
+  ### 备注
+  **wcharTPtr** 会创建一个宽字符串指针类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **wcharTPtr**。
+  ```js
+  const wstr = navigator.dll.wcharTPtr("Hello World!");
+  const wstrDefault = navigator.dll.wcharTPtr();
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.wcharTPtr |
+
+  ---
+
+  # charPtr 函数
+  创建 **char*** 类型对象。
+
+  ### 语法
+  ```js
+  navigator.dll.charPtr([value: string]) : TypeCharPtr
+  ```
+
+  ### 参数
+  `[value]`
+
+  类型: **string**
+
+  UTF-8 字符串。
+
+  ### 返回值
+  类型: **TypeCharPtr**
+
+  如果函数成功，则返回类型对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量大于 **1**。
+  - `value` 不是 **string**。
+
+  ### 备注
+  **charPtr** 会创建一个 UTF-8 字符串指针类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **charPtr**。
+  ```js
+  const str = navigator.dll.charPtr("Hello world");
+  const strDefault = navigator.dll.charPtr();
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.charPtr |
+
+  ---
+
+  # bool 函数
+  创建 **_Bool** 类型对象。
+
+  ### 语法
+  ```js
+  navigator.dll.bool([value: Boolean]) : TypeBool
+  ```
+
+  ### 参数
+  `[value]`
+
+  类型: **Boolean**
+
+  布尔值。
+
+  ### 返回值
+  类型: **TypeBool**
+
+  如果函数成功，则返回类型对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量大于 **1**。
+  - `value` 不是 **Boolean**。
+
+  ### 备注
+  **bool** 会创建一个布尔类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **bool**。
+  ```js
+  const b0 = navigator.dll.bool(true);
+  const b0Default = navigator.dll.bool();
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.bool |
+
+  ---
+
+  ## load 函数
+  加载一个动态链接库。
+
+  ### 语法
+  ```js
+  navigator.dll.load(libFileName: String[, config: Number]) : LoadDllNavigatorData
+  ```
+
+  ### 参数
+  `libFileName`
+
+  类型: **String**
+
+  库名称。
+
+  `[config]`
+
+  类型: **Number**
+
+  加载配置，其可以为以下值的组合: 
+  | 名称 | 功能 |
+  | :- | :- |
+  | CONFIG_ABI_WIN64 | 使用 WIN64 ABI (在 x64 环境下强制使用) |
+  | CONFIG_ABI_STDCALL | 使用 STDCALL ABI (在 x86 环境下默认使用) |
+  | CONFIG_ABI_CDECL | 使用 CDECL ABI |
+
+  ### 返回值
+  类型: **LoadDllNavigatorData**
+
+  如果函数成功，则返回一个对象，其结构如下：
+  ```js
+  {
+      exports: Object,
+      close: Function
+  }
+  ```
+  `exports`
+
+  类型: **Object**
+
+  该库的所有导出函数，用于调用，其通项语法如下
+  ```js
+  exportFunctionName(returnValue: Type*[, ...args: Type*]): void
+  ```
+  
+  > [!WARNING]
+  > 此函数为 FFI层 高危函数，使用不当将导致程序崩溃、内存泄漏等问题。
+
+  ### 参数
+  `returnValue`
+
+  类型: **Type\***
+
+  接收返回值。
+
+  `[...args: Type*]`
+
+  类型: **Type\***
+
+  可选函数调用参数。
+
+  ### 返回值
+  无
+
+  此函数通常因以下原因之一而抛出异常:
+
+  &bull; 传入参数的数量小于 **1**。
+
+  &bull; 内存分配失败。
+
+  此函数通常因以下原因之一而直接导致程序崩溃:
+
+  &bull; 调用约定不匹配。
+  
+  &bull; 调用栈被破坏。
+
+  &bull; 内存堆被破坏。
+
+  `close`
+
+  类型: **Function**
+
+  关闭并释放该库的所有资源。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  &bull; 传入参数的数量不等于 **1**。
+
+  &bull; `path` 不是 **String**。
+
+  &bull; 加载库失败。
+
+  ### 备注
+  **load** 函数会调用 `LoadLibraryW` 加载系统原生库并且读取所有导出方法，并且允许在 JS 中直接调用，其的强大功能给与其极高的自由度，但是请严格确保调用的准确性，否则程序将直接崩溃。**load** 函数的返回值支持使用 `using` 关键字以实现自动关闭资源。
+
+  ### 例
+  以下示例代码演示如何使用 **load**。
+  ```js
+  const dll = navigator.dll.load("C:\\mylib.dll");
+  dll.exports.printf(navigator.dll.charPtr("Hello World!"));
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.load |
+
+  ---
+
+  # sizeof 函数
+  获取一个类型对象的内存占用大小。
+
+  ### 语法
+  ```js
+  navigator.dll.sizeof(type: Type*) : BigInt
+  ```
+
+  ### 参数
+  `type`
+
+  类型: **Type\***
+
+  任意类型对象。
+
+  ### 返回值
+  类型: **BigInt**
+
+  占用的内存大小，单位为字节。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量不等于 **1**。
+  - `type` 不是任意 **Type\***。
+
+  ### 备注
+  **sizeof** 函数会返回类型对象所表示类型的 `sizeof` 结果。
+
+  ### 例
+  以下示例代码演示如何使用 **sizeof**。
+  ```js
+  const size = navigator.dll.sizeof(navigator.dll.double(0));
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.sizeof |
+
+  ---
+
+  # malloc 函数
+  向操作系统申请一块连续内存。
+
+  > [!WARNING]
+  > 此函数为 FFI层 高危函数，使用不当将导致程序崩溃、内存泄漏等问题。
+
+  ### 语法
+  ```js
+  navigator.dll.malloc(size: BigInt) : TypeVoidPtr
+  ```
+
+  ### 参数
+  `size`
+
+  类型: **BigInt**
+
+  申请的连续内存大小。
+
+  ### 返回值
+  类型: **TypeVoidPtr**
+
+  如果函数成功，则返回类型对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量不等于 **1**。
+  - `size` 不是 **BigInt**。
+
+  此函数通常因以下原因之一而导致程序直接崩溃:
+
+  - 申请超大连续内存导致系统可用内存严重不足。
+
+  ### 备注
+  **malloc** 函数会使用 C 原生接口 `malloc` 向操作系统申请一块长度为 `size` 字节的连续内存并返回其起始无类型指针。当该内存不再使用时，应当手动释放以节省内存空间。有关如何释放，请参阅 [navigator.dll.free](#free-函数)。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **malloc**。
+  ```js
+  const ptr = navigator.dll.malloc(BigInt(1 * 1024 * 1024 * 1024));
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.malloc |
+
+  ---
+
+  # free 函数
+  释放一块连续内存。
+
+  > [!WARNING]
+  > 此函数为 FFI层 高危函数，使用不当将导致程序崩溃、内存泄漏等问题。
+
+  ### 语法
+  ```js
+  navigator.dll.free(ptr: TypeVoidPtr) : void
+  ```
+
+  ### 参数
+  `ptr`
+
+  类型: **TypeVoidPtr**
+
+  堆指针。
+
+  ### 返回值
+  无
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量不等于 **1**。
+  - `ptr` 不是 **TypeVoidPtr**。
+  
+  此函数通常因以下原因之一而导致程序直接崩溃:
+
+  - `ptr` 不是空指针且不是有效地址。
+
+  ### 备注
+  **free** 函数会释放由 **malloc** 函数申请的连续内存并将 **TypeVoidPtr** 的指针值置空。有关如何分配内存，请参阅 [navigator.dll.malloc](#malloc-函数)。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **free**。
+  ```js
+  const ptr = navigator.dll.malloc(BigInt(1 * 1024 * 1024 * 1024));
+  navigator.dll.free(ptr);
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.free |
+
+  ---
+
+  # size 函数
+  获取连续内存的总大小。
+
+  ### 语法
+  ```js
+  navigator.dll.size(ptr: TypeVoidPtr) : void
+  ```
+
+  ### 参数
+  `ptr`
+
+  类型: **TypeVoidPtr**
+
+  堆指针。
+
+  ### 返回值
+  类型: **BigInt**
+
+  连续内存大小，单位为字节
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量不等于 **1**。
+  - `ptr` 不是 **TypeVoidPtr**。
+  - `ptr` 无效。
+
+  ### 备注
+  **size** 函数会返回由 **malloc** 函数申请的连续内存的总大小，单位为字节。有关如何分配内存，请参阅 [navigator.dll.malloc](#malloc-函数)。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **size**。
+  ```js
+  const ptr = navigator.dll.malloc(BigInt(1 * 1024 * 1024 * 1024));
+  console.log(navigator.dll.size(ptr)); //输出 1073741824
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.size |
+
+  ---
+
+  # assign 函数
+  将一个类型对象的值写入到堆。
+
+  > [!WARNING]
+  > 此函数为 FFI层 高危函数，使用不当将导致程序崩溃、内存泄漏等问题。
+
+
+  ### 语法
+  ```js
+  navigator.dll.assign(ptr: TypeVoidPtr, source: Type*) : void
+  ```
+
+  ### 参数
+  `ptr`
+
+  类型: **TypeVoidPtr**
+
+  堆指针。
+
+  `source`
+
+  类型: **Type\***
+
+  任意类型对象。
+
+  ### 返回值
+  无
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量不等于 **2**。
+  - `ptr` 不是 **TypeVoidPtr**。
+  - `ptr` 是空指针。
+
+  此函数通常因以下原因之一而导致程序直接崩溃:
+
+  - `ptr` 不是空指针且不是有效指针。
+  - 非字符串类型写入内存越界。
+
+  ### 备注
+  **assign** 函数会强制将堆指针解释为传入类型对象的类型并且将其值写入至已分配的堆内存，其中 **char\*** 和 **wchar_t\*** 类型在长度超出 `size - 1(2)` 时会截断至 `size - 1(2)` 并且补全终止符 `\0`。有关如何读取，请参阅 [navigator.dll.read](#read-函数)。有关如何分配内存，请参阅 [navigator.dll.malloc](#malloc-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **assign**。
+  ```js
+  const ptr = navigator.dll.malloc(navigator.dll.sizeof(navigator.dll.int(BigInt(0))));
+  navigator.dll.assign(ptr, navigator.dll.int(BigInt(123)));
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.assign |
+
+  ---
+
+  # read 函数
+  从堆指针读取值。
+
+  > [!WARNING]
+  > 此函数为 FFI层 高危函数，使用不当将导致程序崩溃、内存泄漏等问题。
+
+
+  ### 语法
+  ```js
+  navigator.dll.read(ptr: TypeVoidPtr, output: Type*[, size: BigInt]) : void
+  ```
+
+  ### 参数
+  `ptr`
+
+  类型: **TypeVoidPtr**
+
+  堆指针。
+
+  `output`
+
+  类型: **Type\***
+
+  任意类型对象。
+  
+  `[size]`
+
+  类型: **BigInt**
+
+  允许字符串读取的最大长度。
+
+  ### 返回值
+  无
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量不等于 **2**。
+  - `ptr` 不是 **TypeVoidPtr**。
+  - `ptr` 是空指针。
+  - `output` 不是 **Type\***。
+
+  此函数通常因以下原因之一而导致程序直接崩溃:
+
+  - `ptr` 不是空指针且不是有效指针。
+  - `ptr` 存储的值无法以指定类型读取。
+  - `ptr` 读取越界。
+
+  ### 备注
+  **read** 函数会强制将堆指针解释为传入类型对象的类型并且读取堆内存写入到 `output` 中。有关如何写入，请参阅 [navigator.dll.assign](#assign-函数)。有关如何分配内存，请参阅 [navigator.dll.malloc](#malloc-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **read**。
+  ```js
+  const ptr = navigator.dll.malloc(navigator.dll.sizeof(navigator.dll.int(BigInt(0))));
+  navigator.dll.assign(ptr, navigator.dll.int(BigInt(123)));
+  const value = navigator.dll.int(BigInt(0));
+  navigator.dll.read(ptr, value);
+  console.log(value.value); //输出 123
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.read |
+
+  ---
+
+  # readVoidPtrAsBinary 函数
+  从堆指针读取二进制数据。
+
+  > [!WARNING]
+  > 此函数为 FFI层 高危函数，使用不当将导致程序崩溃、内存泄漏等问题。
+
+
+  ### 语法
+  ```js
+  navigator.dll.readVoidPtrAsBinary(ptr: TypeVoidPtr[, size: BigInt]) : Uint8Array
+  ```
+
+  ### 参数
+  `ptr`
+
+  类型: **TypeVoidPtr**
+
+  堆指针。
+  
+  `[size]`
+
+  类型: **BigInt**
+
+  读取的长度。注意仅在堆指针由引擎创建时此参数可选，否则必须指明。
+
+  ### 返回值
+  无
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量不等于 **1** 或 **2**。
+  - `ptr` 不是 **TypeVoidPtr**。
+  - `ptr` 是空指针。
+
+  此函数通常因以下原因之一而导致程序直接崩溃:
+
+  - `ptr` 不是空指针且不是有效指针。
+  - `ptr` 读取越界。
+
+  ### 备注
+  **readVoidPtrAsBinary** 函数会从无符号指针指向的地址开始连续读取 `size` 长度的内存数据并且转换为 **Uint8Array** 类型返回。有关如何分配内存，请参阅 [navigator.dll.malloc](#malloc-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **readVoidPtrAsBinary**。
+  ```js
+  const ptr = navigator.dll.malloc(navigator.dll.sizeof(navigator.dll.int(BigInt(0))));
+  navigator.dll.assign(ptr, navigator.dll.int(BigInt(123)));
+  console.log(navigator.dll.readVoidPtrAsBinary(ptr)[0]); //输出 123
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.readVoidPtrAsBinary |
+
+  ---
+
+  # writeVoidPtrWithBinary 函数
+  向堆指针写入二进制数据。
+
+  > [!WARNING]
+  > 此函数为 FFI层 高危函数，使用不当将导致程序崩溃、内存泄漏等问题。
+
+
+  ### 语法
+  ```js
+  navigator.dll.writeVoidPtrWithBinary(ptr: TypeVoidPtr, data: Uint8Array) : void
+  ```
+
+  ### 参数
+  `ptr`
+
+  类型: **TypeVoidPtr**
+
+  堆指针。
+  
+  `data`
+
+  类型: **Uint8Array**
+
+  待写入的二进制数据。
+
+  ### 返回值
+  无
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量不等于 **2**。
+  - `ptr` 不是 **TypeVoidPtr**。
+  - `ptr` 是空指针。
+
+  此函数通常因以下原因之一而导致程序直接崩溃:
+
+  - `ptr` 不是空指针且不是有效指针。
+  - `ptr` 写入越界。
+
+  ### 备注
+  **writeVoidPtrWithBinary** 函数会从无符号指针指向的地址开始连续写入 `data.byteLength` 长度的内存数据。有关如何分配内存，请参阅 [navigator.dll.malloc](#malloc-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **writeVoidPtrWithBinary**。
+  ```js
+  const ptr = navigator.dll.malloc(navigator.dll.sizeof(navigator.dll.int(BigInt(0))));
+  navigator.dll.writeVoidPtrWithBinary(ptr, new Uint8Array(4).fill(1));
+  console.log(navigator.dll.readVoidPtrAsBinary(ptr).length, navigator.dll.readVoidPtrAsBinary(ptr)[0]); //输出 4 1
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.writeVoidPtrAsBinary |
+
+  ---
+
 
   

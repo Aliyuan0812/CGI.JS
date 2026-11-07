@@ -2,7 +2,7 @@
 
 #ifndef AY_CJS_CPP
 #define AY_CJS_CPP
-#define AY_CJS_CPP_VW std::wstring(L"3.7.20261101.01")
+#define AY_CJS_CPP_VW std::wstring(L"4.0.20261107.01")
 #define AY_CJS_CPP_VL []() -> std::wstring { \
     std::wstring s(AY_CJS_CPP_VW); \
     s.erase(std::remove(s.begin(), s.end(), L'.'), s.end()); \
@@ -12,6 +12,7 @@
 
 
 #include "../include/cjskit.hpp"
+#include <shared_mutex>
 using namespace cjs;
 
 //void debug(std::wstring text = L"命中") {
@@ -168,20 +169,22 @@ int FileMain(const OpaqueData& data) {
         errorOutput.clear();
     }
 
-    FileController fc = FileController(commandStartFilePath, apppath(0));
     BYTEBUFFER fileContent = {};
+    {
+        FileController fc = FileController(commandStartFilePath, apppath(0));
+        if (!fc.exists()) {
+            CreateOutput(L"Execution failed: \n", GetColorValue(L"Error"));
+            CreateOutput(L"The file does not exist.\n", GetColorValue(L"Error"));
+            goto EndProcess;
+        }
+        if (!fc.read(0, fc.size(), &fileContent)) {
+            CreateOutput(L"Execution failed: \n", GetColorValue(L"Error"));
+            CreateOutput(L"Cannot to read the file.\n", GetColorValue(L"Error"));
+            goto EndProcess;
+        }
+    }
 
-    if (!fc.exists()) {
-        CreateOutput(L"Execution failed: \n", GetColorValue(L"Error"));
-        CreateOutput(L"The file does not exist.\n", GetColorValue(L"Error"));
-        goto EndProcess;
-    }
-    if (!fc.read(0, fc.size(), &fileContent)) {
-        CreateOutput(L"Execution failed: \n", GetColorValue(L"Error"));
-        CreateOutput(L"Cannot to read the file.\n", GetColorValue(L"Error"));
-        goto EndProcess;
-    }
-    else {
+    {
 
         std::wstring code = GetTextFromBYTEBUFFER(&fileContent);
 
@@ -433,15 +436,20 @@ int FastCgiMain(const OpaqueData& data, std::wstring startFilePath = L"") {
                 }
                 else {
                     ClearOutput();
+                    outputTemp_mtx.lock_shared();
                     ULL tsize = outputTemp.size();
                     OutputStack(ji.errorStack);
                     ULL csize = outputTemp.size();
+                    outputTemp_mtx.unlock_shared();
 
                     std::string code = "<!DOCTYPE html><html lang=\"zh-cmn-Hans\"><head></head><body>";
                     code += "<p style=\"color: #FF4444\">" + wstringToString(ji.errorFront) + ":" + wstringToString(ji.message) + "</p>";
+
                     for (ULL i = tsize; i < csize; ++i) {
+                        outputTemp_mtx.lock_shared();
                         std::wstring key = outputTemp.at(static_cast<size_t>(i)).first;
                         const std::wstring& value = outputTemp.at(static_cast<size_t>(i)).second;
+                        outputTemp_mtx.unlock_shared();
 
                         size_t pos = 0;
                         while ((pos = key.find(L'&', pos)) != std::wstring::npos) {
@@ -679,9 +687,18 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
             std::wstring json = GetTextFromBYTEBUFFER(&result);
             if (json.empty()) goto ProcessConfigEnd;
             OBJECT config = JSON.parse(json);
-            for (const auto& pair : config) {
-                configObject[pair.first] = pair.second;
-            }
+            std::function<OBJECT(OBJECT, OBJECT)> overrideFunc = nullptr;
+            overrideFunc = [&](OBJECT configObject, OBJECT config) {
+                for (const auto&[key, value] : config) {
+                    if (configObject.count(key) && configObject[key].isObject() && value.isObject()) {
+                        configObject[key] = overrideFunc(configObject[key].get<OBJECT>(), config[key].get<OBJECT>());
+                    }
+                    else configObject[key] = value;
+                }
+                return configObject;
+                };
+            configObject = overrideFunc(configObject, config);
+
         }
         catch (std::exception& ec) {
             tempOutput += L"Warning: The config file is invalid JSON. Configurations do not take effect. (Reason: '" + stringToWstring(std::string(ec.what())) + L"')\n";

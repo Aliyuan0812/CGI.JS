@@ -11,6 +11,7 @@
 #include <windows.h>
 #include <WinSock2.h>
 #include <Shlwapi.h>
+#include <dbghelp.h>
 #include <shellapi.h>
 #include <ws2tcpip.h>
 #include <mmsystem.h>
@@ -49,6 +50,7 @@
 #include <future>
 #include <random>
 
+#pragma comment(lib, "dbghelp.lib")
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "wininet.lib")
@@ -79,6 +81,12 @@ extern "C" {
 #include "./thirdParty/fastcgi/include/fcgios.h"
 
 #include "./thirdParty/zlib/include/zlib.h"
+
+#if defined(_WIN64)
+#include "./thirdParty/libffi/include/x64/ffi.h"
+#elif defined(_WIN32)
+#include "./thirdParty/libffi/include/x86/ffi.h"
+#endif
 }
 
 #include "./thirdParty/cryptopp/include/aes.h"
@@ -144,11 +152,13 @@ extern "C" {
 #pragma comment(lib, "\"" __FILE__ "/../thirdParty/fastcgi/lib/x64/Debug/fcgi.lib\"")
 #pragma comment(lib, "\"" __FILE__ "/../thirdParty/cryptopp/lib/x64/Debug/cryptopp.lib\"")
 #pragma comment(lib, "\"" __FILE__ "/../thirdParty/zlib/lib/x64/Debug/zlib.lib\"")
+#pragma comment(lib, "\"" __FILE__ "/../thirdParty/libffi/lib/x64/Debug/ffi.lib\"")
 #else
 #pragma comment(lib, "\"" __FILE__ "/../thirdParty/quickjs-ng/lib/x64/Release/qjs.lib\"")
 #pragma comment(lib, "\"" __FILE__ "/../thirdParty/fastcgi/lib/x64/Release/fcgi.lib\"")
 #pragma comment(lib, "\"" __FILE__ "/../thirdParty/cryptopp/lib/x64/Release/cryptopp.lib\"")
 #pragma comment(lib, "\"" __FILE__ "/../thirdParty/zlib/lib/x64/Release/zlib.lib\"")
+#pragma comment(lib, "\"" __FILE__ "/../thirdParty/libffi/lib/x64/Release/ffi.lib\"")
 #endif
 #elif defined(_WIN32)
 #if defined(_DEBUG)
@@ -156,11 +166,13 @@ extern "C" {
 #pragma comment(lib, "\"" __FILE__ "/../thirdParty/fastcgi/lib/x86/Debug/fcgi.lib\"")
 #pragma comment(lib, "\"" __FILE__ "/../thirdParty/cryptopp/lib/x86/Debug/cryptopp.lib\"")
 #pragma comment(lib, "\"" __FILE__ "/../thirdParty/zlib/lib/x86/Debug/zlib.lib\"")
+#pragma comment(lib, "\"" __FILE__ "/../thirdParty/libffi/lib/x86/Debug/ffi.lib\"")
 #else
 #pragma comment(lib, "\"" __FILE__ "/../thirdParty/quickjs-ng/lib/x86/Release/qjs.lib\"")
 #pragma comment(lib, "\"" __FILE__ "/../thirdParty/fastcgi/lib/x86/Release/fcgi.lib\"")
 #pragma comment(lib, "\"" __FILE__ "/../thirdParty/cryptopp/lib/x86/Release/cryptopp.lib\"")
 #pragma comment(lib, "\"" __FILE__ "/../thirdParty/zlib/lib/x86/Release/zlib.lib\"")
+#pragma comment(lib, "\"" __FILE__ "/../thirdParty/libffi/lib/x86/Release/ffi.lib\"")
 #endif
 #endif
 #undef min
@@ -2582,6 +2594,8 @@ namespace cjs {
     ordered_map<std::wstring, std::wstring> commandArgList = {};
     std::wstring commandStartFilePath = L"";
     std::wstring errorOutput = L"";
+
+    SharedMutex outputTemp_mtx = {};
     GMMT outputTemp = {};
     bool isPaused = false;
 
@@ -3087,7 +3101,9 @@ namespace cjs {
 
     void CreateOutput(const std::wstring& outputData, WORD color) {
         if (!isConsoleEnv) {
+            outputTemp_mtx.lock();
             outputTemp[outputData] = L"";
+            outputTemp_mtx.unlock();
             return;
         }
         HANDLE hConsole = CreateFileW(L"CONOUT$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -3197,7 +3213,9 @@ namespace cjs {
 
     void CreateOutput(const std::wstring& outputData, const std::wstring& fgColor = L"", const std::wstring& bgColor = L"") {
         if (!isConsoleEnv) {
+            outputTemp_mtx.lock();
             outputTemp[outputData] = fgColor;
+            outputTemp_mtx.unlock();
             return;
         }
         if (isConsoleAnsiSupported) {
@@ -3247,7 +3265,9 @@ namespace cjs {
 
     bool ClearOutput() {
         if (!isConsoleEnv) {
+            outputTemp_mtx.lock();
             outputTemp.clear();
+            outputTemp_mtx.unlock();
             return true;
         }
         return system("cls") == 0;
@@ -5943,7 +5963,10 @@ namespace cjs {
         }
         ~JSVInst() = default;
         JSValue get() const {
-            return jsv.load(std::memory_order_acquire);
+            return jsv;
+        }
+        JSValue* getPtr() const {
+            return &jsv;
         }
         void add() const {
             ULL old = refCount.load(std::memory_order_relaxed);
@@ -5984,7 +6007,7 @@ namespace cjs {
             return qjsRefCount.exchange(0, std::memory_order_acq_rel);
         }
     private:
-        mutable std::atomic<JSValue> jsv = {};
+        mutable JSValue jsv = {};
         mutable std::atomic<ULL> refCount = 0;
         mutable std::atomic<ULL> qjsRefCount = 0;
     };
@@ -6157,6 +6180,9 @@ namespace cjs {
             }
             jsvi->remove();
             return v;
+        }
+        JSValue* getPtr() const {
+            return jsvi->getPtr();
         }
         JSV& cget(long long dupRef = 0) {
             if (jsvi == nullptr || ctx == nullptr) return *this;
@@ -7278,17 +7304,18 @@ namespace cjs {
         JavaScriptMethod* jsm = nullptr;
 
         SharedMutex fileControllerList_mtx = {};
-        std::unordered_map<ULL, FileController*> fileControllerList = {};
+        std::unordered_map<int, FileController*> fileControllerList = {};
         SharedMutex executeJsList_mtx = {};
         std::unordered_map<ULL, JavaScript*> executeJsList = {};
         SharedMutex formDataList_mtx = {};
-        std::unordered_map<ULL, FORMDATA> formDataList = {};
+        std::unordered_map<int, FORMDATA> formDataList = {};
         SharedMutex networkHttpList_mtx = {};
-        std::unordered_map<ULL, XMLHttpRequest*> networkHttpList = {};
-
+        std::unordered_map<int, XMLHttpRequest*> networkHttpList = {};
         Atomic<bool> isUpdating = false;
+
         SharedMutex timeoutList_mtx = {};
         std::unordered_map<ULL, ThreadData> timeoutList = {};
+
         SharedMutex threadList_mtx = {};
         std::vector<Thread> threadList = {};
 
@@ -7302,6 +7329,9 @@ namespace cjs {
         std::vector<HMODULE> hModuleList = {};
         SharedMutex hModuleCJSValueList_mtx = {};
         std::unordered_map<ULL, JSV> hModuleCJSValueList = {};
+
+        SharedMutex hDllList_mtx = {};
+        std::unordered_map<int, HMODULE> hDllList = {};
 
         SharedMutex argumentPackageList_mtx = {};
         std::unordered_map<ULL, CJSArgumentPackage> argumentPackageList = {};
@@ -8819,8 +8849,11 @@ namespace cjs {
         *outPtr = buffer;
         return len * sizeof(char);
     }
-    void FreeHeapData(CJSHeapData data) {
-        if (data.tag == 1) {
+    void FreeHeapData(const CJSHeapData& data) {
+        if (data.tag == 0) {
+            free(data.data);
+        }
+        else if (data.tag == 1) {
             delete[]((CJSByte*)data.data);
         }
         else if (data.tag == 2) {
@@ -8846,7 +8879,7 @@ namespace cjs {
             JSMData& jsmd = *jsmdPtr;
             JSContext* ctx = jsmd.ctx;
 
-            JS_SetInterruptHandler(jsmdPtr->rt, [](JSRuntime* rt, void* opaque) -> int {
+            JS_SetInterruptHandler(jsmdPtr->rt, [](JSContext* rt, void* opaque) -> int {
                 JSMData* jsmdPtr = (JSMData*)opaque;
                 if (jsmdPtr->isNeedBreak) {
                     jsmdPtr->isNeedBreak = false;
@@ -8868,10 +8901,10 @@ namespace cjs {
             AppendMethod(ctx, global, "wait", global_wait);
             AppendMethod(ctx, global, "btoa", global_btoa);
             AppendMethod(ctx, global, "atob", global_atob);
-            AppendMethod(ctx, global, "FormData", NewConstructor(ctx, "FormData", global_FormData));
+            SetAttribute(ctx, global, "FormData", NewConstructor(ctx, "FormData", global_FormData));
             AppendMethod(ctx, global, "setTimeout", global_setTimeout);
             AppendMethod(ctx, global, "clearTimeout", global_clearTimeout);
-            AppendMethod(ctx, global, "Blob", NewConstructor(ctx, "Blob", global_Blob));
+            SetAttribute(ctx, global, "Blob", NewConstructor(ctx, "Blob", global_Blob));
 
             JSV system = NewObject(ctx, global, "system");
             SetSymbolName(ctx, system, "System");
@@ -8964,6 +8997,12 @@ namespace cjs {
                     AppendMethod(ctx, filesystem, "scan", filesystem_scan);
                     AppendMethod(ctx, filesystem, "info", filesystem_info);
                     AppendMethod(ctx, filesystem, "input", filesystem_input);
+                    AppendMethod(ctx, filesystem, "isFile", filesystem_isFile);
+                    AppendMethod(ctx, filesystem, "isFolder", filesystem_isFolder);
+                    AppendMethod(ctx, filesystem, "getNameFromPath", filesystem_getNameFromPath);
+                    AppendMethod(ctx, filesystem, "formatPath", filesystem_formatPath);
+                    AppendMethod(ctx, filesystem, "formatToAbsolutePath", filesystem_formatToAbsolutePath);
+                    AppendMethod(ctx, filesystem, "formatToRelativePath", filesystem_formatToRelativePath);
                     successCount++;
                 }
 
@@ -9038,7 +9077,7 @@ namespace cjs {
 
                 if (isAll || chosedModules.count("cjs:URL")) {
                     JSV URL = NewConstructor(ctx, "URL", global_URL);
-                    AppendMethod(ctx, global, "URL", URL);
+                    SetAttribute(ctx, global, "URL", URL);
                     AppendMethod(ctx, URL, "createObjectURL", global_URL_createObjectURL);
                     AppendMethod(ctx, URL, "revokeObjectURL", global_URL_revokeObjectURL);
                     successCount++;
@@ -9048,6 +9087,44 @@ namespace cjs {
                     JSV http = NewObject(ctx, GetProperty(ctx, global, "network"), "http");
                     SetSymbolName(ctx, http, "HttpNetwork");
                     AppendMethod(ctx, http, "open", network_http_open);
+                    successCount++;
+                }
+
+                if (isAll || chosedModules.count("cjs:navigator")) {
+                    JSV navigator = NewObject(ctx, global, "navigator");
+                    SetSymbolName(ctx, navigator, "Navigator");
+                    JSV dll = NewObject(ctx, navigator, "dll");
+                    AppendMethod(ctx, dll, "load", navigator_dll_load);
+                    AppendMethod(ctx, dll, "void", navigator_dll_void);
+                    AppendMethod(ctx, dll, "voidPtr", navigator_dll_voidPtr);
+                    AppendMethod(ctx, dll, "unsignedLongLong", navigator_dll_unsignedLongLong);
+                    AppendMethod(ctx, dll, "unsignedLong", navigator_dll_unsignedLong);
+                    AppendMethod(ctx, dll, "unsignedInt", navigator_dll_unsignedInt);
+                    AppendMethod(ctx, dll, "long", navigator_dll_long);
+                    AppendMethod(ctx, dll, "longLong", navigator_dll_longLong);
+                    AppendMethod(ctx, dll, "int", navigator_dll_int);
+                    AppendMethod(ctx, dll, "float", navigator_dll_float);
+                    AppendMethod(ctx, dll, "double", navigator_dll_double);
+                    AppendMethod(ctx, dll, "char", navigator_dll_char);
+                    AppendMethod(ctx, dll, "unsignedChar", navigator_dll_unsignedChar);
+                    AppendMethod(ctx, dll, "short", navigator_dll_short);
+                    AppendMethod(ctx, dll, "unsignedShort", navigator_dll_unsignedShort);
+                    AppendMethod(ctx, dll, "longDouble", navigator_dll_longDouble);
+                    AppendMethod(ctx, dll, "wcharT", navigator_dll_wcharT);
+                    AppendMethod(ctx, dll, "wcharTPtr", navigator_dll_wcharTPtr);
+                    AppendMethod(ctx, dll, "charPtr", navigator_dll_charPtr);
+                    AppendMethod(ctx, dll, "bool", navigator_dll_bool);
+                    AppendMethod(ctx, dll, "sizeof", navigator_dll_sizeof);
+                    AppendMethod(ctx, dll, "malloc", navigator_dll_malloc);
+                    AppendMethod(ctx, dll, "free", navigator_dll_free);
+                    AppendMethod(ctx, dll, "size", navigator_dll_size);
+                    AppendMethod(ctx, dll, "assign", navigator_dll_assign);
+                    AppendMethod(ctx, dll, "read", navigator_dll_read);
+                    AppendMethod(ctx, dll, "readVoidPtrAsBinary", navigator_dll_readVoidPtrAsBinary);
+                    AppendMethod(ctx, dll, "writeVoidPtrWithBinary", navigator_dll_writeVoidPtrWithBinary);
+                    SetAttribute(ctx, dll, "CONFIG_ABI_WIN64", NewNumber(ctx, 0b00000001));
+                    SetAttribute(ctx, dll, "CONFIG_ABI_STDCALL", NewNumber(ctx, 0b00000010));
+                    SetAttribute(ctx, dll, "CONFIG_ABI_CDECL", NewNumber(ctx, 0b00000100));
                     successCount++;
                 }
 
@@ -9178,6 +9255,15 @@ namespace cjs {
                 jsmd->hModuleList.clear();
                 jsmd->hModuleList_mtx.unlock();
 
+                jsmd->hDllList_mtx.lock();
+                for (auto& [id, hm] : jsmd->hDllList) {
+                    if (hm != NULL) {
+                        FreeLibrary(hm);
+                    }
+                }
+                jsmd->hDllList.clear();
+                jsmd->hDllList_mtx.unlock();
+
                 jsmd->argumentPackageList_mtx.lock();
                 for (auto& [id, data] : jsmd->argumentPackageList) {
                     delete[] data.argumentValues;
@@ -9270,7 +9356,7 @@ namespace cjs {
             }
             bool isAsync = true;
             if (!ReadJSValueAsBool(ctx, js_async, isAsync)) {
-                JS_ThrowTypeError(ctx, "[network.http.open] The third argument must be a boolean");
+                JS_ThrowTypeError(ctx, "[network.http.open] The third argument must be a Boolean");
                 return JS_EXCEPTION;
             }
             std::string username = "";
@@ -9297,14 +9383,13 @@ namespace cjs {
             }
 
             jsmdPtr->networkHttpList_mtx.lock();
-            ULL id = GetNewNetworkHttpId(ctx);
+            int id = GetNewNetworkHttpId(ctx);
             jsmdPtr->networkHttpList[id] = xhr;
             jsmdPtr->networkHttpList_mtx.unlock();
 
             JSV returnValue = NewObject(ctx);
             SetSymbolName(ctx, returnValue, "XMLHttpRequest");
 
-            SetAttribute(ctx, returnValue, "id", NewUint64(ctx, id), 0);
             SetAttribute(ctx, returnValue, "isAsync", NewBool(ctx, isAsync), 0);
 
             SetAttribute(ctx, returnValue, "DONE", NewNumber(ctx, 4), 0);
@@ -9346,7 +9431,7 @@ namespace cjs {
             xhr->onreadystatechange = [=]() {
                 AddNativeTask(ctx, [=]() {
                     SetAttribute(ctx, returnValue, "readyState", NewNumber(ctx, static_cast<double>(xhr->readyState)));
-                    if (xhr->readyState == 3) {
+                    if (xhr->readyState == 4) {
                         SetAttribute(ctx, returnValue, "status", NewNumber(ctx, static_cast<double>(xhr->status)));
                         SetAttribute(ctx, returnValue, "statusText", NewString(ctx, wstringToString(xhr->statusText)));
                     }
@@ -9659,7 +9744,7 @@ namespace cjs {
                     });
                 };
 
-            AppendMethod(ctx, returnValue, "open", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)->JSValue {
+            AppendMethod(ctx, returnValue, "open", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque)->JSValue {
                 if (argumentCount < 2 || argumentCount > 5) {
                     JS_ThrowTypeError(ctx, "[network.http.open->open] Only 5 arguments are supported: (method, url, async?, username?, password?)");
                     return JS_EXCEPTION;
@@ -9683,7 +9768,7 @@ namespace cjs {
                 }
                 bool isAsync = true;
                 if (!ReadJSValueAsBool(ctx, js_async, isAsync)) {
-                    JS_ThrowTypeError(ctx, "[network.http.open] The third argument must be a boolean");
+                    JS_ThrowTypeError(ctx, "[network.http.open] The third argument must be a Boolean");
                     return JS_EXCEPTION;
                 }
                 std::string username = "";
@@ -9703,12 +9788,6 @@ namespace cjs {
                     return JS_EXCEPTION;
                 }
 
-                JSV js_id = GetProperty(ctx, thisVal, "id");
-                ULL id = 0;
-                if (!ReadJSValueAsUint64(ctx, js_id, id)) {
-                    JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
-                    return JS_EXCEPTION;
-                }
                 jsmdPtr->networkHttpList_mtx.lock_shared();
                 auto it = jsmdPtr->networkHttpList.find(id);
                 if (it == jsmdPtr->networkHttpList.end()) {
@@ -9729,8 +9808,8 @@ namespace cjs {
                 SetAttribute(ctx, thisVal, "statusText", NewString(ctx, ""));
 
                 return JS_UNDEFINED;
-                });
-            AppendMethod(ctx, returnValue, "send", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) -> JSValue {
+                }, id);
+            AppendMethod(ctx, returnValue, "send", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque)->JSValue {
 
                 JSMData* jsmdPtr = nullptr;
                 if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
@@ -9738,12 +9817,6 @@ namespace cjs {
                     return JS_EXCEPTION;
                 }
 
-                JSV js_id = GetProperty(ctx, thisVal, "id");
-                ULL id = 0;
-                if (!ReadJSValueAsUint64(ctx, js_id, id)) {
-                    JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
-                    return JS_EXCEPTION;
-                }
                 jsmdPtr->networkHttpList_mtx.lock_shared();
                 auto it = jsmdPtr->networkHttpList.find(id);
                 if (it == jsmdPtr->networkHttpList.end()) {
@@ -9765,6 +9838,11 @@ namespace cjs {
 
                 bool isAsync = true;
                 ReadJSValueAsBool(ctx, GetProperty(ctx, thisVal, "isAsync"), isAsync);
+
+                if (!isAsync) {
+                    JS_ThrowInternalError(ctx, "[network.http.open->send] Synchronous mode is deprecated and no longer supported");
+                    return JS_EXCEPTION;
+                }
                 BYTEBUFFER tempBinary = {};
                 if (argumentCount == 0) {
                     if (!isAsync) xhr->send();
@@ -9796,9 +9874,13 @@ namespace cjs {
                     else if (GetSymbolName(ctx, js_body) == "FormData") {
                         JSV js_id = GetProperty(ctx, js_body, { {"internal"}, {"id"} });
                         ULL id = 0;
+                        if (!js_id.isValid() || !ReadJSValueAsUint64(ctx, js_id, id)) {
+                            JS_ThrowInternalError(ctx, "[network.http.open->send] The FormData instance is invalid");
+                            return JS_EXCEPTION;
+                        }
                         jsmdPtr->formDataList_mtx.lock_shared();
-                        auto it = jsmdPtr->formDataList.find(id);
-                        if (!js_id.isValid() || !ReadJSValueAsUint64(ctx, js_id, id) || it == jsmdPtr->formDataList.end()) {
+                        auto it = jsmdPtr->formDataList.find((int)id);
+                        if (it == jsmdPtr->formDataList.end()) {
                             jsmdPtr->formDataList_mtx.unlock_shared();
                             JS_ThrowInternalError(ctx, "[network.http.open->send] The FormData instance is invalid");
                             return JS_EXCEPTION;
@@ -9845,8 +9927,8 @@ namespace cjs {
                 }
 
                 return JS_UNDEFINED;
-                });
-            AppendMethod(ctx, returnValue, "overrideMimeType", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) -> JSValue {
+                }, id);
+            AppendMethod(ctx, returnValue, "overrideMimeType", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque)->JSValue {
                 if (argumentCount != 1) {
                     JS_ThrowTypeError(ctx, "[network.http.open->overrideMimeType] Only 1 argument is supported: (mimeString)");
                     return JS_EXCEPTION;
@@ -9860,12 +9942,6 @@ namespace cjs {
                     return JS_EXCEPTION;
                 }
 
-                JSV js_id = GetProperty(ctx, thisVal, "id");
-                ULL id = 0;
-                if (!ReadJSValueAsUint64(ctx, js_id, id)) {
-                    JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
-                    return JS_EXCEPTION;
-                }
                 jsmdPtr->networkHttpList_mtx.lock_shared();
                 auto it = jsmdPtr->networkHttpList.find(id);
                 if (it == jsmdPtr->networkHttpList.end()) {
@@ -9883,8 +9959,8 @@ namespace cjs {
                 }
                 xhr->overrideMimeType(stringToWstring(mimeString));
                 return JS_UNDEFINED;
-                });
-            AppendMethod(ctx, returnValue, "setRequestHeader", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) -> JSValue {
+                }, id);
+            AppendMethod(ctx, returnValue, "setRequestHeader", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque) -> JSValue {
                 if (argumentCount != 2) {
                     JS_ThrowTypeError(ctx, "[network.http.open->setRequestHeader] Only 2 arguments are supported: (name, value)");
                     return JS_EXCEPTION;
@@ -9901,12 +9977,6 @@ namespace cjs {
                     return JS_EXCEPTION;
                 }
 
-                JSV js_id = GetProperty(ctx, thisVal, "id");
-                ULL id = 0;
-                if (!ReadJSValueAsUint64(ctx, js_id, id)) {
-                    JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
-                    return JS_EXCEPTION;
-                }
                 jsmdPtr->networkHttpList_mtx.lock_shared();
                 auto it = jsmdPtr->networkHttpList.find(id);
                 if (it == jsmdPtr->networkHttpList.end()) {
@@ -9919,8 +9989,8 @@ namespace cjs {
 
                 xhr->setRequestHeader(stringToWstring(name), stringToWstring(value));
                 return JS_UNDEFINED;
-                });
-            AppendMethod(ctx, returnValue, "getResponseHeader", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) -> JSValue {
+                }, id);
+            AppendMethod(ctx, returnValue, "getResponseHeader", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque) -> JSValue {
                 if (argumentCount != 1) {
                     JS_ThrowTypeError(ctx, "[network.http.open->getResponseHeader] Only 1 argument is supported: (name)");
                     return JS_EXCEPTION;
@@ -9935,12 +10005,6 @@ namespace cjs {
                     return JS_EXCEPTION;
                 }
 
-                JSV js_id = GetProperty(ctx, thisVal, "id");
-                ULL id = 0;
-                if (!ReadJSValueAsUint64(ctx, js_id, id)) {
-                    JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
-                    return JS_EXCEPTION;
-                }
                 jsmdPtr->networkHttpList_mtx.lock_shared();
                 auto it = jsmdPtr->networkHttpList.find(id);
                 if (it == jsmdPtr->networkHttpList.end()) {
@@ -9952,20 +10016,14 @@ namespace cjs {
                 jsmdPtr->networkHttpList_mtx.unlock_shared();
 
                 return NewString(ctx, wstringToString(xhr->getResponseHeader(stringToWstring(name)))).get(1);
-                });
-            AppendMethod(ctx, returnValue, "getAllResponseHeaders", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) -> JSValue {
+                }, id);
+            AppendMethod(ctx, returnValue, "getAllResponseHeaders", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque) -> JSValue {
                 JSMData* jsmdPtr = nullptr;
                 if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
                     JS_ThrowInternalError(ctx, "[native code] This context is invalid");
                     return JS_EXCEPTION;
                 }
 
-                JSV js_id = GetProperty(ctx, thisVal, "id");
-                ULL id = 0;
-                if (!ReadJSValueAsUint64(ctx, js_id, id)) {
-                    JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
-                    return JS_EXCEPTION;
-                }
                 jsmdPtr->networkHttpList_mtx.lock_shared();
                 auto it = jsmdPtr->networkHttpList.find(id);
                 if (it == jsmdPtr->networkHttpList.end()) {
@@ -9985,8 +10043,8 @@ namespace cjs {
                     headerString += wstringToString(ToDownLetters(key)) + ": " + wstringToString(ToDownLetters(value)) + "\r\n";
                 }
                 return NewString(ctx, headerString).get(1);
-                });
-            AppendMethod(ctx, returnValue, "abort", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)->JSValue {
+                }, id);
+            AppendMethod(ctx, returnValue, "abort", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque)->JSValue {
                 if (argumentCount != 0) {
                     JS_ThrowTypeError(ctx, "[network.http.open->abort] No arguments are supported");
                     return JS_EXCEPTION;
@@ -9998,12 +10056,6 @@ namespace cjs {
                     return JS_EXCEPTION;
                 }
 
-                JSV js_id = GetProperty(ctx, thisVal, "id");
-                ULL id = 0;
-                if (!ReadJSValueAsUint64(ctx, js_id, id)) {
-                    JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
-                    return JS_EXCEPTION;
-                }
                 jsmdPtr->networkHttpList_mtx.lock_shared();
                 auto it = jsmdPtr->networkHttpList.find(id);
                 if (it == jsmdPtr->networkHttpList.end()) {
@@ -10017,8 +10069,8 @@ namespace cjs {
                 xhr->abort();
 
                 return JS_UNDEFINED;
-                });
-            AppendMethod(ctx, returnValue, "close", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)->JSValue {
+                }, id);
+            AppendMethod(ctx, returnValue, "close", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque)->JSValue {
                 if (argumentCount != 0) {
                     JS_ThrowTypeError(ctx, "[network.http.open->close] No arguments are supported");
                     return JS_EXCEPTION;
@@ -10030,25 +10082,18 @@ namespace cjs {
                     return JS_EXCEPTION;
                 }
 
-                JSV js_id = GetProperty(ctx, thisVal, "id");
-                ULL id = 0;
-                if (!ReadJSValueAsUint64(ctx, js_id, id)) {
-                    JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
-                    return JS_EXCEPTION;
-                }
                 jsmdPtr->networkHttpList_mtx.lock();
                 auto it = jsmdPtr->networkHttpList.find(id);
                 if (it == jsmdPtr->networkHttpList.end()) {
                     jsmdPtr->networkHttpList_mtx.unlock();
-                    JS_ThrowInternalError(ctx, "[network.http.open] This instance is invalid");
-                    return JS_EXCEPTION;
+                    return JS_UNDEFINED;
                 }
                 it->second->release();
                 delete it->second;
                 jsmdPtr->networkHttpList.erase(it);
                 jsmdPtr->networkHttpList_mtx.unlock();
                 return JS_UNDEFINED;
-                });
+                }, id);
             SetAttribute(ctx, returnValue, GetProperty(ctx, NewGlobalObject(ctx), {
                 {"Symbol"},
                 {"dispose"}
@@ -10131,7 +10176,7 @@ namespace cjs {
             JSV js_isUrlEncoding = (argumentCount == 2) ? JSV(ctx, &argumentValues[1]).cget(1).cset(1) : NewBool(ctx, false);
             bool isUrlEncoding = false;
             if (!JS_IsBool(js_isUrlEncoding.get(0)) || !ReadJSValueAsBool(ctx, js_isUrlEncoding, isUrlEncoding)) {
-                promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.decodeBase91] The second argument must be a boolean"));
+                promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.decodeBase91] The second argument must be a Boolean"));
                 return promise.promise.get(1);
             }
             BYTEBUFFER data = ToValue(ctx, js_data);
@@ -10179,7 +10224,7 @@ namespace cjs {
             JSV js_isUrlEncoding = (argumentCount == 2) ? JSV(ctx, &argumentValues[1]).cget(1).cset(1) : NewBool(ctx, false);
             bool isUrlEncoding = false;
             if (!JS_IsBool(js_isUrlEncoding.get(0)) || !ReadJSValueAsBool(ctx, js_isUrlEncoding, isUrlEncoding)) {
-                promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.decodeBase64] The second argument must be a boolean"));
+                promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.decodeBase64] The second argument must be a Boolean"));
                 return promise.promise.get(1);
             }
             BYTEBUFFER data = ToValue(ctx, js_data);
@@ -10290,7 +10335,7 @@ namespace cjs {
             JSV js_isUrlEncoding = (argumentCount == 2) ? JSV(ctx, &argumentValues[1]).cget(1).cset(1) : NewBool(ctx, false);
             bool isUrlEncoding = false;
             if (!JS_IsBool(js_isUrlEncoding.get(0)) || !ReadJSValueAsBool(ctx, js_isUrlEncoding, isUrlEncoding)) {
-                promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.encodeBase91] The second argument must be a boolean"));
+                promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.encodeBase91] The second argument must be a Boolean"));
                 return promise.promise.get(1);
             }
             BYTEBUFFER data = ToValue(ctx, js_data);
@@ -10338,7 +10383,7 @@ namespace cjs {
             JSV js_isUrlEncoding = (argumentCount == 2) ? JSV(ctx, &argumentValues[1]).cget(1).cset(1) : NewBool(ctx, false);
             bool isUrlEncoding = false;
             if (!JS_IsBool(js_isUrlEncoding.get(0)) || !ReadJSValueAsBool(ctx, js_isUrlEncoding, isUrlEncoding)) {
-                promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.encodeBase64] The second argument must be a boolean"));
+                promise.Reject(ctx, NewTypeError(ctx, "[bytebuffer.encodeBase64] The second argument must be a Boolean"));
                 return promise.promise.get(1);
             }
             BYTEBUFFER data = ToValue(ctx, js_data);
@@ -10723,8 +10768,8 @@ namespace cjs {
                 return JS_EXCEPTION;
             }
 
+            jsmdPtr->timeoutList_mtx.lock();
             ULL id = GetNewTimeoutId(ctx);
-
             Thread td = {};
             AddAsyncTask(ctx, [=]() {
 
@@ -10760,7 +10805,6 @@ namespace cjs {
                 jsmdPtr->timeoutList.erase(id);
                 jsmdPtr->timeoutList_mtx.unlock();
                 }, &td);
-            jsmdPtr->timeoutList_mtx.lock();
             jsmdPtr->timeoutList[id].thread = td;
             jsmdPtr->timeoutList[id].shared = nullptr;
             jsmdPtr->timeoutList_mtx.unlock();
@@ -10802,28 +10846,26 @@ namespace cjs {
                 return JS_EXCEPTION;
             }
 
-            ULL id = GetNewFormDataId(ctx);
-
+            jsmdPtr->formDataList_mtx.lock();
+            int id = GetNewFormDataId(ctx);
             if (argumentCount == 1) {
                 JSV js_binary = JSV(ctx, &argumentValues[0]);
                 BYTEBUFFER binary = {};
                 if (!ReadJSValueAsArrayBufferView(ctx, js_binary, binary)) {
+                    jsmdPtr->formDataList_mtx.unlock();
                     JS_ThrowTypeError(ctx, "[FormData] Failed to read the form data binary");
                     return JS_EXCEPTION;
                 }
-                jsmdPtr->formDataList_mtx.lock_shared();
                 if (!ReadBinaryAsFormData(ctx, &binary, jsmdPtr->formDataList[id])) {
-                    jsmdPtr->formDataList_mtx.unlock_shared();
+                    jsmdPtr->formDataList_mtx.unlock();
                     JS_ThrowTypeError(ctx, "[FormData] Failed to parse the form data binary");
                     return JS_EXCEPTION;
                 }
-                jsmdPtr->formDataList_mtx.unlock_shared();
             }
             else {
-                jsmdPtr->formDataList_mtx.lock();
                 jsmdPtr->formDataList[id] = {};
-                jsmdPtr->formDataList_mtx.unlock();
             }
+            jsmdPtr->formDataList_mtx.unlock();
 
             JSV returnValue = NewObject(ctx);
             SetSymbolName(ctx, returnValue, "FormData");
@@ -10833,7 +10875,7 @@ namespace cjs {
             SetAttribute(ctx, internal, "id", NewUint64(ctx, static_cast<uint64_t>(id)));
             SetAttribute(ctx, internal, "thisValue", JSV(ctx, &thisVal).cget(1).cset(1));
 
-            AppendMethod(ctx, returnValue, "append", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)-> JSValue {
+            AppendMethod(ctx, returnValue, "append", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque)-> JSValue {
                 if (argumentCount > 3 || argumentCount < 2) {
                     JS_ThrowTypeError(ctx, "[FormData->append] Only 2 or 3 arguments are supported: (name, value, filename?)");
                     return JS_EXCEPTION;
@@ -10845,17 +10887,14 @@ namespace cjs {
                     return JS_EXCEPTION;
                 }
 
-                JSV js_id = GetProperty(ctx, thisVal, { {"internal"},{"id"} });
-                uint64_t uid = 0;
                 jsmdPtr->formDataList_mtx.lock_shared();
-                if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                if (!jsmdPtr->formDataList.count(id)) {
                     jsmdPtr->formDataList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[FormData->append] This instance is invalid");
                     return JS_EXCEPTION;
 
                 }
                 jsmdPtr->formDataList_mtx.unlock_shared();
-                ULL id = static_cast<ULL>(uid);
 
                 JSV vName = JSV(ctx, &argumentValues[0]).cget(1).cset(1);
                 JSV vValue = JSV(ctx, &argumentValues[1]).cget(1).cset(1);
@@ -10877,8 +10916,8 @@ namespace cjs {
                 jsmdPtr->formDataList_mtx.unlock();
 
                 return JS_UNDEFINED;
-                });
-            AppendMethod(ctx, returnValue, "set", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)-> JSValue {
+                }, id);
+            AppendMethod(ctx, returnValue, "set", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque)-> JSValue {
                 if (argumentCount > 3 || argumentCount < 2) {
                     JS_ThrowTypeError(ctx, "[FormData->set] Only 2 or 3 arguments are supported: (name, value, filename?)");
                     return JS_EXCEPTION;
@@ -10890,17 +10929,13 @@ namespace cjs {
                     return JS_EXCEPTION;
                 }
 
-                JSV js_id = GetProperty(ctx, thisVal, { {"internal"},{"id"} });
-                uint64_t uid = 0;
                 jsmdPtr->formDataList_mtx.lock_shared();
-                if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                if (!jsmdPtr->formDataList.count(id)) {
                     jsmdPtr->formDataList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[FormData->set] This instance is invalid");
                     return JS_EXCEPTION;
                 }
                 jsmdPtr->formDataList_mtx.unlock_shared();
-
-                ULL id = static_cast<ULL>(uid);
 
                 JSV vName = JSV(ctx, &argumentValues[0]).cget(1).cset(1);
                 JSV vValue = JSV(ctx, &argumentValues[1]).cget(1).cset(1);
@@ -10926,8 +10961,8 @@ namespace cjs {
                 jsmdPtr->formDataList_mtx.unlock();
 
                 return JS_UNDEFINED;
-                });
-            AppendMethod(ctx, returnValue, "delete", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)-> JSValue {
+                }, id);
+            AppendMethod(ctx, returnValue, "delete", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque)-> JSValue {
                 if (argumentCount != 1) {
                     JS_ThrowTypeError(ctx, "[FormData->delete] Only 1 argument is supported: (name)");
                     return JS_EXCEPTION;
@@ -10939,17 +10974,13 @@ namespace cjs {
                     return JS_EXCEPTION;
                 }
 
-                JSV js_id = GetProperty(ctx, thisVal, { {"internal"},{"id"} });
-                uint64_t uid = 0;
                 jsmdPtr->formDataList_mtx.lock_shared();
-                if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                if (!jsmdPtr->formDataList.count(id)) {
                     jsmdPtr->formDataList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[FormData->delete] This instance is invalid");
                     return JS_EXCEPTION;
                 }
                 jsmdPtr->formDataList_mtx.unlock_shared();
-
-                ULL id = static_cast<ULL>(uid);
 
                 JSV vName = JSV(ctx, &argumentValues[0]);
                 std::string name = ToString(ctx, vName);
@@ -10959,9 +10990,9 @@ namespace cjs {
                 jsmdPtr->formDataList_mtx.unlock();
 
                 return JS_UNDEFINED;
-                });
+                }, id);
 
-            AppendMethod(ctx, returnValue, "get", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)-> JSValue {
+            AppendMethod(ctx, returnValue, "get", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque)-> JSValue {
                 if (argumentCount != 1) {
                     JS_ThrowTypeError(ctx, "[FormData->get] Only 1 argument is supported: (name)");
                     return JS_EXCEPTION;
@@ -10973,17 +11004,13 @@ namespace cjs {
                     return JS_EXCEPTION;
                 }
 
-                JSV js_id = GetProperty(ctx, thisVal, { {"internal"},{"id"} });
-                uint64_t uid = 0;
                 jsmdPtr->formDataList_mtx.lock_shared();
-                if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                if (!jsmdPtr->formDataList.count(id)) {
                     jsmdPtr->formDataList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[FormData->get] This instance is invalid");
                     return JS_EXCEPTION;
                 }
                 jsmdPtr->formDataList_mtx.unlock_shared();
-
-                ULL id = static_cast<ULL>(uid);
 
                 JSV vName = JSV(ctx, &argumentValues[0]);
                 std::string name = ToString(ctx, vName);
@@ -11001,8 +11028,8 @@ namespace cjs {
                 }
 
                 return JS_UNDEFINED;
-                });
-            AppendMethod(ctx, returnValue, "getAll", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)-> JSValue {
+                }, id);
+            AppendMethod(ctx, returnValue, "getAll", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque)-> JSValue {
                 if (argumentCount != 1) {
                     JS_ThrowTypeError(ctx, "[FormData->getAll] Only 1 argument is supported: (name)");
                     return JS_EXCEPTION;
@@ -11014,18 +11041,13 @@ namespace cjs {
                     return JS_EXCEPTION;
                 }
 
-                JSV js_id = GetProperty(ctx, thisVal, { {"internal"},{"id"} });
-                uint64_t uid = 0;
-
                 jsmdPtr->formDataList_mtx.lock_shared();
-                if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                if (!jsmdPtr->formDataList.count(id)) {
                     jsmdPtr->formDataList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[FormData->getAll] This instance is invalid");
                     return JS_EXCEPTION;
                 }
                 jsmdPtr->formDataList_mtx.unlock_shared();
-
-                ULL id = static_cast<ULL>(uid);
 
                 JSV vName = JSV(ctx, &argumentValues[0]);
                 std::string name = ToString(ctx, vName);
@@ -11046,8 +11068,8 @@ namespace cjs {
                 }
 
                 return JS_UNDEFINED;
-                });
-            AppendMethod(ctx, returnValue, "has", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)-> JSValue {
+                }, id);
+            AppendMethod(ctx, returnValue, "has", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque)-> JSValue {
                 if (argumentCount != 1) {
                     JS_ThrowTypeError(ctx, "[FormData->has] Only 1 argument is supported: (name)");
                     return JS_EXCEPTION;
@@ -11059,18 +11081,13 @@ namespace cjs {
                     return JS_EXCEPTION;
                 }
 
-                JSV js_id = GetProperty(ctx, thisVal, { {"internal"},{"id"} });
-                uint64_t uid = 0;
-
                 jsmdPtr->formDataList_mtx.lock_shared();
-                if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                if (!jsmdPtr->formDataList.count(id)) {
                     jsmdPtr->formDataList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[FormData->has] This instance is invalid");
                     return JS_EXCEPTION;
                 }
                 jsmdPtr->formDataList_mtx.unlock_shared();
-
-                ULL id = static_cast<ULL>(uid);
 
                 JSV vName = JSV(ctx, &argumentValues[0]);
                 std::string name = ToString(ctx, vName);
@@ -11087,9 +11104,9 @@ namespace cjs {
                 }
 
                 return JS_UNDEFINED;
-                });
+                }, id);
 
-            AppendMethod(ctx, returnValue, "entries", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)-> JSValue {
+            AppendMethod(ctx, returnValue, "entries", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque)-> JSValue {
                 if (argumentCount != 0) {
                     JS_ThrowTypeError(ctx, "[FormData->entries] No arguments are supported");
                     return JS_EXCEPTION;
@@ -11101,20 +11118,15 @@ namespace cjs {
                     return JS_EXCEPTION;
                 }
 
-                JSV js_id = GetProperty(ctx, thisVal, { {"internal"},{"id"} });
-                uint64_t uid = 0;
-
                 jsmdPtr->formDataList_mtx.lock_shared();
-                if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                if (!jsmdPtr->formDataList.count(id)) {
                     jsmdPtr->formDataList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[FormData->entries] This instance is invalid");
                     return JS_EXCEPTION;
                 }
                 jsmdPtr->formDataList_mtx.unlock_shared();
 
-                ULL id = static_cast<ULL>(uid);
-
-                JSV iterator = NewIterator(ctx, thisVal, "FormData Interator", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)-> JSValue {
+                JSV iterator = NewIterator(ctx, thisVal, "FormData Interator", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque)-> JSValue {
 
                     JSMData* jsmdPtr = nullptr;
                     if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
@@ -11124,16 +11136,13 @@ namespace cjs {
 
                     JSV internal = GetProperty(ctx, thisVal, "internal");
 
-                    JSV js_id = GetProperty(ctx, internal, "id");
-                    uint64_t uid = 0;
                     jsmdPtr->formDataList_mtx.lock_shared();
-                    if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                    if (!jsmdPtr->formDataList.count(id)) {
                         jsmdPtr->formDataList_mtx.unlock_shared();
                         JS_ThrowInternalError(ctx, "[FormData->entries] This instance is invalid");
                         return JS_EXCEPTION;
                     }
                     jsmdPtr->formDataList_mtx.unlock_shared();
-                    ULL id = static_cast<ULL>(uid);
 
                     JSV array = GetProperty(ctx, internal, "data");
                     uint64_t index = 0;
@@ -11157,18 +11166,18 @@ namespace cjs {
                     jsmdPtr->formDataList_mtx.unlock_shared();
 
                     return returnObject.get(1);
-                    }, 0);
+                    }, id);
 
                 JSV internal = NewObject(ctx);
                 SetAttribute(ctx, internal, "_isPrivate", NewBool(ctx, true));
-                SetAttribute(ctx, internal, "id", js_id);
+                SetAttribute(ctx, internal, "id", GetProperty(ctx, thisVal, { { "internal" },{ "id" } }));
                 SetAttribute(ctx, internal, "index", NewUint64(ctx, 0));
 
                 SetAttribute(ctx, iterator, "internal", internal);
 
                 return iterator.get(1);
-                });
-            AppendMethod(ctx, returnValue, "keys", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)-> JSValue {
+                }, id);
+            AppendMethod(ctx, returnValue, "keys", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque)-> JSValue {
                 if (argumentCount != 0) {
                     JS_ThrowTypeError(ctx, "[FormData->keys] No arguments are supported");
                     return JS_EXCEPTION;
@@ -11180,20 +11189,15 @@ namespace cjs {
                     return JS_EXCEPTION;
                 }
 
-                JSV js_id = GetProperty(ctx, thisVal, { {"internal"},{"id"} });
-                uint64_t uid = 0;
-
                 jsmdPtr->formDataList_mtx.lock_shared();
-                if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                if (!jsmdPtr->formDataList.count(id)) {
                     jsmdPtr->formDataList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[FormData->keys] This instance is invalid");
                     return JS_EXCEPTION;
                 }
                 jsmdPtr->formDataList_mtx.unlock_shared();
 
-                ULL id = static_cast<ULL>(uid);
-
-                JSV iterator = NewIterator(ctx, thisVal, "FormData Interator", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)-> JSValue {
+                JSV iterator = NewIterator(ctx, thisVal, "FormData Interator", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque)-> JSValue {
 
                     JSMData* jsmdPtr = nullptr;
                     if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
@@ -11203,17 +11207,13 @@ namespace cjs {
 
                     JSV internal = GetProperty(ctx, thisVal, "internal");
 
-                    JSV js_id = GetProperty(ctx, internal, "id");
-                    uint64_t uid = 0;
-
                     jsmdPtr->formDataList_mtx.lock_shared();
-                    if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                    if (!jsmdPtr->formDataList.count(id)) {
                         jsmdPtr->formDataList_mtx.unlock_shared();
                         JS_ThrowInternalError(ctx, "[FormData->keys] This instance is invalid");
                         return JS_EXCEPTION;
                     }
                     jsmdPtr->formDataList_mtx.unlock_shared();
-                    ULL id = static_cast<ULL>(uid);
 
                     JSV array = GetProperty(ctx, internal, "data");
                     uint64_t index = 0;
@@ -11238,18 +11238,18 @@ namespace cjs {
                     jsmdPtr->formDataList_mtx.unlock_shared();
 
                     return returnObject.get(1);
-                    }, 0);
+                    }, id);
 
                 JSV internal = NewObject(ctx);
                 SetAttribute(ctx, internal, "_isPrivate", NewBool(ctx, true));
-                SetAttribute(ctx, internal, "id", js_id);
+                SetAttribute(ctx, internal, "id", GetProperty(ctx, thisVal, { { "internal" },{ "id" } }));
                 SetAttribute(ctx, internal, "index", NewUint64(ctx, 0));
 
                 SetAttribute(ctx, iterator, "internal", internal);
 
                 return iterator.get(1);
-                });
-            AppendMethod(ctx, returnValue, "values", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)-> JSValue {
+                }, id);
+            AppendMethod(ctx, returnValue, "values", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque)-> JSValue {
                 if (argumentCount != 0) {
                     JS_ThrowTypeError(ctx, "[FormData->values] No arguments are supported");
                     return JS_EXCEPTION;
@@ -11261,20 +11261,16 @@ namespace cjs {
                     return JS_EXCEPTION;
                 }
 
-                JSV js_id = GetProperty(ctx, thisVal, { {"internal"},{"id"} });
-                uint64_t uid = 0;
-
                 jsmdPtr->formDataList_mtx.lock_shared();
-                if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                if (!jsmdPtr->formDataList.count(id)) {
                     jsmdPtr->formDataList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[FormData->values] This instance is invalid");
                     return JS_EXCEPTION;
 
                 }
                 jsmdPtr->formDataList_mtx.unlock_shared();
-                ULL id = static_cast<ULL>(uid);
 
-                JSV iterator = NewIterator(ctx, thisVal, "FormData Interator", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)-> JSValue {
+                JSV iterator = NewIterator(ctx, thisVal, "FormData Interator", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque)-> JSValue {
 
                     JSMData* jsmdPtr = nullptr;
                     if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
@@ -11284,17 +11280,13 @@ namespace cjs {
 
                     JSV internal = GetProperty(ctx, thisVal, "internal");
 
-                    JSV js_id = GetProperty(ctx, internal, "id");
-                    uint64_t uid = 0;
-
                     jsmdPtr->formDataList_mtx.lock_shared();
-                    if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                    if (!jsmdPtr->formDataList.count(id)) {
                         jsmdPtr->formDataList_mtx.unlock_shared();
                         JS_ThrowInternalError(ctx, "[FormData->values] This instance is invalid");
                         return JS_EXCEPTION;
                     }
                     jsmdPtr->formDataList_mtx.unlock_shared();
-                    ULL id = static_cast<ULL>(uid);
 
                     JSV array = GetProperty(ctx, internal, "data");
                     uint64_t index = 0;
@@ -11319,18 +11311,18 @@ namespace cjs {
                     jsmdPtr->formDataList_mtx.unlock_shared();
 
                     return returnObject.get(1);
-                    }, 0);
+                    }, id);
 
                 JSV internal = NewObject(ctx);
                 SetAttribute(ctx, internal, "_isPrivate", NewBool(ctx, true));
-                SetAttribute(ctx, internal, "id", js_id);
+                SetAttribute(ctx, internal, "id", GetProperty(ctx, thisVal, { { "internal" },{ "id" } }));
                 SetAttribute(ctx, internal, "index", NewUint64(ctx, 0));
 
                 SetAttribute(ctx, iterator, "internal", internal);
 
                 return iterator.get(1);
-                });
-            AppendMethod(ctx, returnValue, "forEach", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)-> JSValue {
+                }, id);
+            AppendMethod(ctx, returnValue, "forEach", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque)-> JSValue {
                 if (argumentCount < 1 || argumentCount > 2) {
                     JS_ThrowTypeError(ctx, "[FormData->forEach] 1 or 2 arguments are supported: (callback, thisArg?)");
                     return JS_EXCEPTION;
@@ -11348,16 +11340,12 @@ namespace cjs {
                     return JS_EXCEPTION;
                 }
 
-                JSV js_id = GetProperty(ctx, thisVal, { {"internal"},{"id"} });
-                uint64_t uid = 0;
-
                 jsmdPtr->formDataList_mtx.lock_shared();
-                if (!ReadJSValueAsUint64(ctx, js_id, uid) || !jsmdPtr->formDataList.count(static_cast<uint64_t>(uid))) {
+                if (!jsmdPtr->formDataList.count(id)) {
                     jsmdPtr->formDataList_mtx.unlock_shared();
                     JS_ThrowInternalError(ctx, "[FormData->forEach] This instance is invalid");
                     return JS_EXCEPTION;
                 }
-                ULL id = static_cast<ULL>(uid);
 
                 for (auto& [iId, fd] : jsmdPtr->formDataList[id]) {
                     CallFunction(ctx, callback, thisArg, {
@@ -11369,8 +11357,9 @@ namespace cjs {
                 jsmdPtr->formDataList_mtx.unlock_shared();
 
                 return JS_UNDEFINED;
-                });
+                }, id);
 
+            SetAttribute(ctx, returnValue, GetProperty(ctx, NewGlobalObject(ctx), { { "Symbol" },{ "iterator"} }), GetProperty(ctx, returnValue, "entries"));
             return returnValue.get(1);
         }
         static JSValue global_use(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -11550,7 +11539,6 @@ namespace cjs {
             jsmdPtr->executeJsList_mtx.lock();
             ULL id = GetNewExecuteJsId(ctx);
             jsmdPtr->executeJsList[id] = js;
-            jsmdPtr->executeJsList_mtx.unlock();
 
             JSContext* newCtx = GetContextThis(js);
             JSMData* newJsmdPtr = nullptr;
@@ -11611,11 +11599,12 @@ namespace cjs {
                 DeleteInstance(jsmdPtr->js);
 
                 return JS_UNDEFINED;
-                }, 0);
+                });
             SetAttribute(ctx, global, GetProperty(ctx, NewGlobalObject(ctx), {
                 {"Symbol"},
                 {"dispose"}
                 }), GetProperty(newCtx, global, "this_close"));
+            jsmdPtr->executeJsList_mtx.unlock();
 
             return global.get(1);
         }
@@ -12195,7 +12184,7 @@ namespace cjs {
 
             bool extractable = false;
             if (!ReadJSValueAsBool(ctx, JSV(ctx, &argumentValues[3]), extractable)) {
-                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] The fourth argument (extractable) must be a boolean"));
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.deriveKey] The fourth argument (extractable) must be a Boolean"));
                 return promise.promise.get(1);
             }
 
@@ -12543,7 +12532,7 @@ namespace cjs {
 
             JSV jsExtractable = GetProperty(ctx, uKey, "extractable");
             if (!jsExtractable.isValid() || !JS_IsBool(jsExtractable.get())) {
-                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.sign] CryptoKey 'extractable' property must be a boolean"));
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.sign] CryptoKey 'extractable' property must be a Boolean"));
                 return promise.promise.get(1);
             }
 
@@ -12759,7 +12748,7 @@ namespace cjs {
 
             JSV jsExtractable = GetProperty(ctx, uKey, "extractable");
             if (!jsExtractable.isValid() || !JS_IsBool(jsExtractable.get())) {
-                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.verify] CryptoKey 'extractable' property must be a boolean"));
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.verify] CryptoKey 'extractable' property must be a Boolean"));
                 return promise.promise.get(1);
             }
 
@@ -12968,7 +12957,7 @@ namespace cjs {
 
             JSV jsExtractable = GetProperty(ctx, uKey, "extractable");
             if (!jsExtractable.isValid() || !JS_IsBool(jsExtractable.get())) {
-                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] CryptoKey 'extractable' property must be a boolean"));
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.encrypt] CryptoKey 'extractable' property must be a Boolean"));
                 return promise.promise.get(1);
             }
 
@@ -13204,7 +13193,7 @@ namespace cjs {
 
             JSV jsExtractable = GetProperty(ctx, uKey, "extractable");
             if (!jsExtractable.isValid() || !JS_IsBool(jsExtractable.get())) {
-                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] CryptoKey 'extractable' property must be a boolean"));
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.decrypt] CryptoKey 'extractable' property must be a Boolean"));
                 return promise.promise.get(1);
             }
 
@@ -14408,7 +14397,7 @@ namespace cjs {
             JSValue jsExtractable = argumentValues[1];
             JSV uExtractable = JSV(ctx, &jsExtractable).cget(1).cset(1);
             if (!JS_IsBool(jsExtractable)) {
-                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] The second argument must be a boolean"));
+                promise.Reject(ctx, NewTypeError(ctx, "[crypto.subtle.generateKey] The second argument must be a Boolean"));
                 return promise.promise.get(1);
             }
 
@@ -15451,7 +15440,7 @@ namespace cjs {
 
                     uint64_t id = (uint64_t)JS_VALUE_GET_PTR(v);
                     if (visited_objs.count(id)) {
-                        CreateOutput(L"[Circular]", cComment);
+                        CreateOutput(L"[circular]", cComment);
                         return;
                     }
                     visited_objs.insert(id);
@@ -15600,7 +15589,7 @@ namespace cjs {
             if (argumentCount >= 3) {
                 JSV js_isHidden = JSV(&argumentValues[2]);
                 if (!JS_IsBool(js_isHidden.get(0)) || !ReadJSValueAsBool(ctx, js_isHidden, isHidden)) {
-                    JS_ThrowTypeError(ctx, "[console.input] The third argument must be a boolean");
+                    JS_ThrowTypeError(ctx, "[console.input] The third argument must be a Boolean");
                     return JS_EXCEPTION;
                 }
             }
@@ -15782,6 +15771,107 @@ namespace cjs {
             FileController fc = FileController(stringToWstring(path), stringToWstring(GetCurrentWorkDirectory(ctx)));
             return JS_NewBool(ctx, fc.exists());
         }
+        static JSValue filesystem_isFile(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 1) {
+                JS_ThrowTypeError(ctx, "[filesystem.isFile] Only 1 argument is supported: (path)");
+                return JS_EXCEPTION;
+            }
+            JSV vPath = JSV(&argumentValues[0]);
+            std::string path = "";
+            if (!JS_IsString(vPath.get(0)) || !ReadJSValueAsString(ctx, vPath, path)) {
+                JS_ThrowTypeError(ctx, "[filesystem.isFile] The first argument must be a string");
+                return JS_EXCEPTION;
+            }
+            FileController fc = FileController(stringToWstring(path), stringToWstring(GetCurrentWorkDirectory(ctx)));
+            return JS_NewBool(ctx, fc.exists() && fc.isFile());
+        }
+        static JSValue filesystem_isFolder(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 1) {
+                JS_ThrowTypeError(ctx, "[filesystem.isFolder] Only 1 argument is supported: (path)");
+                return JS_EXCEPTION;
+            }
+            JSV vPath = JSV(&argumentValues[0]);
+            std::string path = "";
+            if (!JS_IsString(vPath.get(0)) || !ReadJSValueAsString(ctx, vPath, path)) {
+                JS_ThrowTypeError(ctx, "[filesystem.isFolder] The first argument must be a string");
+                return JS_EXCEPTION;
+            }
+            FileController fc = FileController(stringToWstring(path), stringToWstring(GetCurrentWorkDirectory(ctx)));
+            return JS_NewBool(ctx, fc.exists() && fc.isDir());
+        }
+        static JSValue filesystem_getNameFromPath(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 1) {
+                JS_ThrowTypeError(ctx, "[filesystem.getNameFromPath] Only 1 argument is supported: (path)");
+                return JS_EXCEPTION;
+            }
+            JSV vPath = JSV(&argumentValues[0]);
+            std::string path = "";
+            if (!JS_IsString(vPath.get(0)) || !ReadJSValueAsString(ctx, vPath, path)) {
+                JS_ThrowTypeError(ctx, "[filesystem.getNameFromPath] The first argument must be a string");
+                return JS_EXCEPTION;
+            }
+            return NewString(ctx, std::filesystem::path(path).filename().string()).get(1);
+        }
+        static JSValue filesystem_formatPath(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 1) {
+                JS_ThrowTypeError(ctx, "[filesystem.formatPath] Only 1 argument is supported: (path)");
+                return JS_EXCEPTION;
+            }
+            JSV vPath = JSV(&argumentValues[0]);
+            std::string path = "";
+            if (!JS_IsString(vPath.get(0)) || !ReadJSValueAsString(ctx, vPath, path)) {
+                JS_ThrowTypeError(ctx, "[filesystem.formatPath] The first argument must be a string");
+                return JS_EXCEPTION;
+            }
+            return NewString(ctx, [&]() {
+                auto p = std::filesystem::path(path).lexically_normal();
+                auto g = p.generic_string();
+                if (!p.is_absolute() && !g.starts_with("./") && !g.starts_with("../")) g = "./" + g;
+                return g;
+                }()).get(1);
+        }
+        static JSValue filesystem_formatToAbsolutePath(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 1) {
+                JS_ThrowTypeError(ctx, "[filesystem.formatToAbsolutePath] Only 1 argument is supported: (path)");
+                return JS_EXCEPTION;
+            }
+            JSV vPath = JSV(&argumentValues[0]);
+            std::string path = "";
+            if (!JS_IsString(vPath.get(0)) || !ReadJSValueAsString(ctx, vPath, path)) {
+                JS_ThrowTypeError(ctx, "[filesystem.formatToAbsolutePath] The first argument must be a string");
+                return JS_EXCEPTION;
+            }
+            return filesystem_formatPath(ctx, thisVal, 1, NewString(ctx, [&]() {
+                std::filesystem::path workDir(GetCurrentWorkDirectory(ctx));
+                std::filesystem::path input(path);
+                std::filesystem::path combined = workDir / input;
+                return combined.generic_string();
+                }()).getPtr());
+        }
+        static JSValue filesystem_formatToRelativePath(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 1) {
+                JS_ThrowTypeError(ctx, "[filesystem.formatToRelativePath] Only 1 argument is supported: (path)");
+                return JS_EXCEPTION;
+            }
+            JSV vPath = JSV(&argumentValues[0]);
+            std::string path = "";
+            if (!JS_IsString(vPath.get(0)) || !ReadJSValueAsString(ctx, vPath, path)) {
+                JS_ThrowTypeError(ctx, "[filesystem.formatToRelativePath] The first argument must be a string");
+                return JS_EXCEPTION;
+            }
+            std::string relStr = [&]() {
+                std::filesystem::path base(GetCurrentWorkDirectory(ctx));
+                std::filesystem::path target(path);
+                auto rel = target.lexically_relative(base);
+                if (rel == target)
+                    return std::string{};
+                return rel.generic_string();
+                }();
+            if (relStr.empty()) {
+                return JS_NULL;
+            }
+            return filesystem_formatPath(ctx, thisVal, 1, NewString(ctx, relStr).getPtr());
+        }
         static JSValue filesystem_open(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount <= 0 || argumentCount > 2) {
                 JS_ThrowTypeError(ctx, "[filesystem.open] Only 1 or 2 arguments are supported: (path, mode?)");
@@ -15842,13 +15932,10 @@ namespace cjs {
             JSV fileControllerObject = NewObject(ctx);
 
             jsmdPtr->fileControllerList_mtx.lock();
-
-            ULL id = GetNewFileControllerId(ctx);
+            int id = GetNewFileControllerId(ctx);
             jsmdPtr->fileControllerList[id] = fc;
-
             jsmdPtr->fileControllerList_mtx.unlock();
 
-            SetAttribute(ctx, fileControllerObject, "id", NewUint64(ctx, id), 0);
             SetAttribute(ctx, fileControllerObject, "mode", mode, 0);
             SetAttribute(ctx, fileControllerObject, "name", path, 0);
 
@@ -15860,7 +15947,7 @@ namespace cjs {
             SetAttribute(ctx, fileControllerObject, "seekPtr", jsSeek, -1);
 
             if (modeInt & filesystem_open_mode::FILE_MODE_READ || modeInt & filesystem_open_mode::FILE_MODE_RDWR) {
-                AppendMethod(ctx, fileControllerObject, "read", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) ->JSValue {
+                AppendMethod(ctx, fileControllerObject, "read", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque) ->JSValue {
                     if (argumentCount > 1) {
                         JS_ThrowTypeError(ctx, "[filesystem.open->read] Only 1 argument is supported: (?size)");
                         return JS_EXCEPTION;
@@ -15909,9 +15996,7 @@ namespace cjs {
                         return JS_EXCEPTION;
                     }
 
-                    JSV jsId = GetProperty(ctx, vThisVal, "id");
-                    uint64_t id = 0;
-                    if (!ReadJSValueAsUint64(ctx, jsId, id)) {
+                    if (false) {
                     ErrorProcess:;
                         JS_ThrowTypeError(ctx, "[filesystem.open->read] This instance object is invalid");
                         return JS_EXCEPTION;
@@ -15954,10 +16039,10 @@ namespace cjs {
                     }
 
                     return JS_UNDEFINED;
-                    }, -1, 0);
+                    }, id);
             }
             if (modeInt & filesystem_open_mode::FILE_MODE_WRITE || modeInt & filesystem_open_mode::FILE_MODE_RDWR || modeInt & filesystem_open_mode::FILE_MODE_APPEND) {
-                AppendMethod(ctx, fileControllerObject, "write", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) ->JSValue {
+                AppendMethod(ctx, fileControllerObject, "write", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque) ->JSValue {
                     if (argumentCount != 1) {
                         JS_ThrowTypeError(ctx, "[filesystem.open->write] Only 1 argument is supported: (data)");
                         return JS_EXCEPTION;
@@ -16001,9 +16086,7 @@ namespace cjs {
                         }
                     }
 
-                    JSV jsId = GetProperty(ctx, vThisVal, "id");
-                    uint64_t id = 0;
-                    if (!ReadJSValueAsUint64(ctx, jsId, id)) {
+                    if (false) {
                     ErrorProcess:;
                         JS_ThrowTypeError(ctx, "[filesystem.open->write] This instance object is invalid");
                         return JS_EXCEPTION;
@@ -16046,9 +16129,9 @@ namespace cjs {
 
                     JSV returnSize = NewNumber(ctx, (double)writeSize);
                     return returnSize.get(1);
-                    }, -1, 0);
+                    }, id);
             }
-            AppendMethod(ctx, fileControllerObject, "close", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) ->JSValue {
+            AppendMethod(ctx, fileControllerObject, "close", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque) ->JSValue {
                 if (argumentCount > 0) {
                     JS_ThrowTypeError(ctx, "[filesystem.open->close] No arguments are supported");
                     return JS_EXCEPTION;
@@ -16069,31 +16152,21 @@ namespace cjs {
                     return JS_UNDEFINED;
                 }
 
-                JSV jsId = GetProperty(ctx, vThisVal, "id");
-                uint64_t id = 0;
-                if (!ReadJSValueAsUint64(ctx, jsId, id)) {
-                ErrorProcess:;
-                    JS_ThrowTypeError(ctx, "[filesystem.open->read] This instance object is invalid");
-                    return JS_EXCEPTION;
-                }
-
-                jsmdPtr->fileControllerList_mtx.lock_shared();
+                jsmdPtr->fileControllerList_mtx.lock();
                 auto it = jsmdPtr->fileControllerList.find(id);
                 if (it == jsmdPtr->fileControllerList.end()) {
-                    jsmdPtr->fileControllerList_mtx.unlock_shared();
-                    goto ErrorProcess;
+                    jsmdPtr->fileControllerList_mtx.unlock();
+                    return JS_UNDEFINED;
                 }
-                jsmdPtr->fileControllerList_mtx.unlock_shared();
-                jsmdPtr->fileControllerList_mtx.lock();
-                delete jsmdPtr->fileControllerList[id];
-                jsmdPtr->fileControllerList.erase(id);
+                delete it->second;
+                jsmdPtr->fileControllerList.erase(it);
                 jsmdPtr->fileControllerList_mtx.unlock();
 
                 JSV jsClosed = NewBool(ctx, true);
                 SetAttribute(ctx, vThisVal, "closed", jsClosed, 0);
                 return JS_UNDEFINED;
-                }, -1, 0);
-            AppendMethod(ctx, fileControllerObject, "tell", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) ->JSValue {
+                }, id);
+            AppendMethod(ctx, fileControllerObject, "tell", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque) ->JSValue {
                 if (argumentCount > 0) {
                     JS_ThrowTypeError(ctx, "[filesystem.open->tell] No arguments are supported");
                     return JS_EXCEPTION;
@@ -16109,8 +16182,8 @@ namespace cjs {
 
                 JSV jsSeek = GetProperty(ctx, vThisVal, "seekPtr");
                 return jsSeek.get(1);
-                }, -1, 0);
-            AppendMethod(ctx, fileControllerObject, "size", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues)  ->JSValue {
+                }, id);
+            AppendMethod(ctx, fileControllerObject, "size", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque)  ->JSValue {
                 if (argumentCount > 0) {
                     JS_ThrowTypeError(ctx, "[filesystem.open->size] No arguments are supported");
                     return JS_EXCEPTION;
@@ -16124,9 +16197,7 @@ namespace cjs {
 
                 JSV vThisVal = JSV(&thisVal);
 
-                JSV jsId = GetProperty(ctx, vThisVal, "id");
-                uint64_t id = 0;
-                if (!ReadJSValueAsUint64(ctx, jsId, id)) {
+                if (false) {
                 ErrorProcess:;
                     JS_ThrowTypeError(ctx, "[filesystem.open->size] This instance object is invalid");
                     return JS_EXCEPTION;
@@ -16145,8 +16216,8 @@ namespace cjs {
 
                 JSV returnSize = NewNumber(ctx, static_cast<double>(size));
                 return returnSize.get(1);
-                }, -1, 0);
-            AppendMethod(ctx, fileControllerObject, "seek", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) ->JSValue {
+                }, id);
+            AppendMethod(ctx, fileControllerObject, "seek", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque) ->JSValue {
                 if (argumentCount > 2 || argumentCount < 1) {
                     JS_ThrowTypeError(ctx, "[filesystem.open->seek] Only 1 or 2 arguments are supported: (offset, ?whence)");
                     return JS_EXCEPTION;
@@ -16182,9 +16253,7 @@ namespace cjs {
                     return JS_EXCEPTION;
                 }
 
-                JSV jsId = GetProperty(ctx, vThisVal, "id");
-                uint64_t id = 0;
-                if (!ReadJSValueAsUint64(ctx, jsId, id)) {
+                if (false) {
                 ErrorProcess:;
                     JS_ThrowTypeError(ctx, "[filesystem.open->seek] This instance object is invalid");
                     return JS_EXCEPTION;
@@ -16251,7 +16320,7 @@ namespace cjs {
                 SetAttribute(ctx, vThisVal, "seekPtr", newSeekVal, -1);
 
                 return JS_UNDEFINED;
-                }, -1, 0);
+                }, id);
             SetAttribute(ctx, fileControllerObject, GetProperty(ctx, NewGlobalObject(ctx), {
                 {"Symbol"},
                 {"dispose"}
@@ -16260,6 +16329,1182 @@ namespace cjs {
             return fileControllerObject.get(1);
         }
 
+        static JSValue navigator_dll_void(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 0) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.void] No argument is supported");
+                return JS_EXCEPTION;
+            }
+            JSV type = NewObject(ctx);
+            SetSymbolName(ctx, type, "TypeVoid");
+            SetAttribute(ctx, type, "type", "void");
+            SetAttribute(ctx, type, "value", JS_UNDEFINED);
+            SetAttribute(ctx, type, "size", NewUint64(ctx, 0));
+            return type.get(1);
+        }
+        static JSValue navigator_dll_voidPtr(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount > 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.voidPtr] Only 0 or 1 argument is supported: (value?)");
+                return JS_EXCEPTION;
+            }
+            JSV vFinalValue = NewUint64(ctx, 0);
+            if (argumentCount > 0) {
+                JSV vValue = JSV(ctx, &argumentValues[0]);
+                if (!JS_IsBigInt(vValue.get(0))) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.voidPtr] The first argument must be a BigInt");
+                    return JS_EXCEPTION;
+                }
+                vFinalValue = vValue;
+            }
+            JSV type = NewObject(ctx);
+            SetSymbolName(ctx, type, "TypeVoidPtr");
+            SetAttribute(ctx, type, "type", "void*");
+            SetAttribute(ctx, type, "value", vFinalValue);
+            SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(void*)));
+            return type.get(1);
+        }
+        static JSValue navigator_dll_unsignedLongLong(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount > 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.unsignedLongLong] Only 0 or 1 argument is supported: (value?)");
+                return JS_EXCEPTION;
+            }
+            JSV vFinalValue = NewUint64(ctx, 0);
+            if (argumentCount > 0) {
+                JSV vValue = JSV(ctx, &argumentValues[0]);
+                if (!JS_IsBigInt(vValue.get(0))) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.unsignedLongLong] The first argument must be a BigInt");
+                    return JS_EXCEPTION;
+                }
+                vFinalValue = vValue;
+            }
+            JSV type = NewObject(ctx);
+            SetSymbolName(ctx, type, "TypeUnsignedLongLong");
+            SetAttribute(ctx, type, "type", "unsigned long long");
+            SetAttribute(ctx, type, "value", vFinalValue);
+            SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(unsigned long long)));
+            return type.get(1);
+        }
+        static JSValue navigator_dll_unsignedLong(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount > 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.unsignedLong] Only 0 or 1 argument is supported: (value?)");
+                return JS_EXCEPTION;
+            }
+            JSV vFinalValue = NewUint64(ctx, 0);
+            if (argumentCount > 0) {
+                JSV vValue = JSV(ctx, &argumentValues[0]);
+                if (!JS_IsBigInt(vValue.get(0))) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.unsignedLong] The first argument must be a BigInt");
+                    return JS_EXCEPTION;
+                }
+                vFinalValue = vValue;
+            }
+            JSV type = NewObject(ctx);
+            SetSymbolName(ctx, type, "TypeUnsignedLong");
+            SetAttribute(ctx, type, "type", "unsigned long");
+            SetAttribute(ctx, type, "value", vFinalValue);
+            SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(unsigned long)));
+            return type.get(1);
+        }
+        static JSValue navigator_dll_unsignedInt(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount > 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.unsignedInt] Only 0 or 1 argument is supported: (value?)");
+                return JS_EXCEPTION;
+            }
+            JSV vFinalValue = NewUint64(ctx, 0);
+            if (argumentCount > 0) {
+                JSV vValue = JSV(ctx, &argumentValues[0]);
+                if (!JS_IsBigInt(vValue.get(0))) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.unsignedInt] The first argument must be a BigInt");
+                    return JS_EXCEPTION;
+                }
+                vFinalValue = vValue;
+            }
+            JSV type = NewObject(ctx);
+            SetSymbolName(ctx, type, "TypeUnsignedInt");
+            SetAttribute(ctx, type, "type", "unsigned int");
+            SetAttribute(ctx, type, "value", vFinalValue);
+            SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(unsigned int)));
+            return type.get(1);
+        }
+        static JSValue navigator_dll_long(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount > 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.long] Only 0 or 1 argument is supported: (value?)");
+                return JS_EXCEPTION;
+            }
+            JSV vFinalValue = NewUint64(ctx, 0);
+            if (argumentCount > 0) {
+                JSV vValue = JSV(ctx, &argumentValues[0]);
+                if (!JS_IsBigInt(vValue.get(0))) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.long] The first argument must be a BigInt");
+                    return JS_EXCEPTION;
+                }
+                vFinalValue = vValue;
+            }
+            JSV type = NewObject(ctx);
+            SetSymbolName(ctx, type, "TypeLong");
+            SetAttribute(ctx, type, "type", "long");
+            SetAttribute(ctx, type, "value", vFinalValue);
+            SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(long)));
+            return type.get(1);
+        }
+        static JSValue navigator_dll_longLong(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount > 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.longLong] Only 0 or 1 argument is supported: (value?)");
+                return JS_EXCEPTION;
+            }
+            JSV vFinalValue = NewUint64(ctx, 0);
+            if (argumentCount > 0) {
+                JSV vValue = JSV(ctx, &argumentValues[0]);
+                if (!JS_IsBigInt(vValue.get(0))) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.longLong] The first argument must be a BigInt");
+                    return JS_EXCEPTION;
+                }
+                vFinalValue = vValue;
+            }
+            JSV type = NewObject(ctx);
+            SetSymbolName(ctx, type, "TypeLongLong");
+            SetAttribute(ctx, type, "type", "long long");
+            SetAttribute(ctx, type, "value", vFinalValue);
+            SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(long long)));
+            return type.get(1);
+        }
+        static JSValue navigator_dll_int(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount > 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.int] Only 0 or 1 argument is supported: (value?)");
+                return JS_EXCEPTION;
+            }
+            JSV vFinalValue = NewUint64(ctx, 0);
+            if (argumentCount > 0) {
+                JSV vValue = JSV(ctx, &argumentValues[0]);
+                if (!JS_IsBigInt(vValue.get(0))) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.int] The first argument must be a BigInt");
+                    return JS_EXCEPTION;
+                }
+                vFinalValue = vValue;
+            }
+            JSV type = NewObject(ctx);
+            SetSymbolName(ctx, type, "TypeInt");
+            SetAttribute(ctx, type, "type", "int");
+            SetAttribute(ctx, type, "value", vFinalValue);
+            SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(int)));
+            return type.get(1);
+        }
+        static JSValue navigator_dll_float(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount > 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.float] Only 0 or 1 argument is supported: (value?)");
+                return JS_EXCEPTION;
+            }
+            JSV vFinalValue = JS_NewNumber(ctx, 0.0);
+            if (argumentCount > 0) {
+                JSV vValue = JSV(ctx, &argumentValues[0]);
+                if (!JS_IsNumber(vValue.get(0))) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.float] The first argument must be a Number");
+                    return JS_EXCEPTION;
+                }
+                vFinalValue = vValue;
+            }
+            JSV type = NewObject(ctx);
+            SetSymbolName(ctx, type, "TypeFloat");
+            SetAttribute(ctx, type, "type", "float");
+            SetAttribute(ctx, type, "value", vFinalValue);
+            SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(float)));
+            return type.get(1);
+        }
+        static JSValue navigator_dll_double(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount > 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.double] Only 0 or 1 argument is supported: (value?)");
+                return JS_EXCEPTION;
+            }
+            JSV vFinalValue = JS_NewNumber(ctx, 0.0);
+            if (argumentCount > 0) {
+                JSV vValue = JSV(ctx, &argumentValues[0]);
+                if (!JS_IsNumber(vValue.get(0))) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.double] The first argument must be a Number");
+                    return JS_EXCEPTION;
+                }
+                vFinalValue = vValue;
+            }
+            JSV type = NewObject(ctx);
+            SetSymbolName(ctx, type, "TypeDouble");
+            SetAttribute(ctx, type, "type", "double");
+            SetAttribute(ctx, type, "value", vFinalValue);
+            SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(double)));
+            return type.get(1);
+        }
+        static JSValue navigator_dll_char(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount > 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.char] Only 0 or 1 argument is supported: (value?)");
+                return JS_EXCEPTION;
+            }
+            JSV vFinalValue = NewUint64(ctx, 0);
+            if (argumentCount > 0) {
+                JSV vValue = JSV(ctx, &argumentValues[0]);
+                if (!JS_IsBigInt(vValue.get(0))) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.char] The first argument must be a BigInt");
+                    return JS_EXCEPTION;
+                }
+                vFinalValue = vValue;
+            }
+            JSV type = NewObject(ctx);
+            SetSymbolName(ctx, type, "TypeChar");
+            SetAttribute(ctx, type, "type", "char");
+            SetAttribute(ctx, type, "value", vFinalValue);
+            SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(char)));
+            return type.get(1);
+        }
+        static JSValue navigator_dll_unsignedChar(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount > 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.unsignedChar] Only 0 or 1 argument is supported: (value?)");
+                return JS_EXCEPTION;
+            }
+            JSV vFinalValue = NewUint64(ctx, 0);
+            if (argumentCount > 0) {
+                JSV vValue = JSV(ctx, &argumentValues[0]);
+                if (!JS_IsBigInt(vValue.get(0))) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.unsignedChar] The first argument must be a BigInt");
+                    return JS_EXCEPTION;
+                }
+                vFinalValue = vValue;
+            }
+            JSV type = NewObject(ctx);
+            SetSymbolName(ctx, type, "TypeUnsignedChar");
+            SetAttribute(ctx, type, "type", "unsigned char");
+            SetAttribute(ctx, type, "value", vFinalValue);
+            SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(unsigned char)));
+            return type.get(1);
+        }
+        static JSValue navigator_dll_short(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount > 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.short] Only 0 or 1 argument is supported: (value?)");
+                return JS_EXCEPTION;
+            }
+            JSV vFinalValue = NewUint64(ctx, 0);
+            if (argumentCount > 0) {
+                JSV vValue = JSV(ctx, &argumentValues[0]);
+                if (!JS_IsBigInt(vValue.get(0))) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.short] The first argument must be a BigInt");
+                    return JS_EXCEPTION;
+                }
+                vFinalValue = vValue;
+            }
+            JSV type = NewObject(ctx);
+            SetSymbolName(ctx, type, "TypeShort");
+            SetAttribute(ctx, type, "type", "short");
+            SetAttribute(ctx, type, "value", vFinalValue);
+            SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(short)));
+            return type.get(1);
+        }
+        static JSValue navigator_dll_unsignedShort(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount > 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.unsignedShort] Only 0 or 1 argument is supported: (value?)");
+                return JS_EXCEPTION;
+            }
+            JSV vFinalValue = NewUint64(ctx, 0);
+            if (argumentCount > 0) {
+                JSV vValue = JSV(ctx, &argumentValues[0]);
+                if (!JS_IsBigInt(vValue.get(0))) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.unsignedShort] The first argument must be a BigInt");
+                    return JS_EXCEPTION;
+                }
+                vFinalValue = vValue;
+            }
+            JSV type = NewObject(ctx);
+            SetSymbolName(ctx, type, "TypeUnsignedShort");
+            SetAttribute(ctx, type, "type", "unsigned short");
+            SetAttribute(ctx, type, "value", vFinalValue);
+            SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(unsigned short)));
+            return type.get(1);
+        }
+        static JSValue navigator_dll_longDouble(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount > 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.longDouble] Only 0 or 1 argument is supported: (value?)");
+                return JS_EXCEPTION;
+            }
+            JSV vFinalValue = JS_NewNumber(ctx, 0.0);
+            if (argumentCount > 0) {
+                JSV vValue = JSV(ctx, &argumentValues[0]);
+                if (!JS_IsNumber(vValue.get(0))) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.longDouble] The first argument must be a Number");
+                    return JS_EXCEPTION;
+                }
+                vFinalValue = vValue;
+            }
+            JSV type = NewObject(ctx);
+            SetSymbolName(ctx, type, "TypeLongDouble");
+            SetAttribute(ctx, type, "type", "long double");
+            SetAttribute(ctx, type, "value", vFinalValue);
+            SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(long double)));
+            return type.get(1);
+        }
+        static JSValue navigator_dll_wcharT(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount > 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.wcharT] Only 0 or 1 argument is supported: (value?)");
+                return JS_EXCEPTION;
+            }
+            JSV vFinalValue = NewUint64(ctx, 0);
+            if (argumentCount > 0) {
+                JSV vValue = JSV(ctx, &argumentValues[0]);
+                if (!JS_IsBigInt(vValue.get(0))) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.wcharT] The first argument must be a BigInt");
+                    return JS_EXCEPTION;
+                }
+                vFinalValue = vValue;
+            }
+            JSV type = NewObject(ctx);
+            SetSymbolName(ctx, type, "TypeWcharT");
+            SetAttribute(ctx, type, "type", "wchar_t");
+            SetAttribute(ctx, type, "value", vFinalValue);
+            SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(wchar_t)));
+            return type.get(1);
+        }
+        static JSValue navigator_dll_wcharTPtr(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount > 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.wcharTPtr] Only 0 or 1 argument is supported: (value?)");
+                return JS_EXCEPTION;
+            }
+            JSV vFinalValue = JS_NewString(ctx, "");
+            if (argumentCount > 0) {
+                JSV vValue = JSV(ctx, &argumentValues[0]);
+                if (!JS_IsString(vValue.get(0))) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.wcharTPtr] The first argument must be a string");
+                    return JS_EXCEPTION;
+                }
+                vFinalValue = vValue;
+            }
+            JSV type = NewObject(ctx);
+            SetSymbolName(ctx, type, "TypeWcharTPtr");
+            SetAttribute(ctx, type, "type", "wchar_t*");
+            SetAttribute(ctx, type, "value", vFinalValue);
+            SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(wchar_t*)));
+            return type.get(1);
+        }
+        static JSValue navigator_dll_charPtr(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount > 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.charPtr] Only 0 or 1 argument is supported: (value?)");
+                return JS_EXCEPTION;
+            }
+            JSV vFinalValue = JS_NewString(ctx, "");
+            if (argumentCount > 0) {
+                JSV vValue = JSV(ctx, &argumentValues[0]);
+                if (!JS_IsString(vValue.get(0))) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.charPtr] The first argument must be a string");
+                    return JS_EXCEPTION;
+                }
+                vFinalValue = vValue;
+            }
+            JSV type = NewObject(ctx);
+            SetSymbolName(ctx, type, "TypeCharPtr");
+            SetAttribute(ctx, type, "type", "char*");
+            SetAttribute(ctx, type, "value", vFinalValue);
+            SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(char*)));
+            return type.get(1);
+        }
+        static JSValue navigator_dll_bool(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount > 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.bool] Only 0 or 1 argument is supported: (value?)");
+                return JS_EXCEPTION;
+            }
+            JSV vFinalValue = JS_NewBool(ctx, false);
+            if (argumentCount > 0) {
+                JSV vValue = JSV(ctx, &argumentValues[0]);
+                if (!JS_IsBool(vValue.get(0))) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.bool] The first argument must be a Boolean");
+                    return JS_EXCEPTION;
+                }
+                vFinalValue = vValue;
+            }
+            JSV type = NewObject(ctx);
+            SetSymbolName(ctx, type, "TypeBool");
+            SetAttribute(ctx, type, "type", "_Bool");
+            SetAttribute(ctx, type, "value", vFinalValue);
+            SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(bool)));
+            return type.get(1);
+        }
+        static JSValue navigator_dll_sizeof(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.sizeof] Only 1 argument is supported: (Type)");
+                return JS_EXCEPTION;
+            }
+            JSV vValue = JSV(ctx, &argumentValues[0]);
+
+            JSV vSize = {};
+            ULL size = 0;
+            if (!JS_IsObject(vValue.get(0)) || !GetSymbolName(ctx, vValue).starts_with("Type") || !ReadObjectProperty(ctx, vValue, "size", vSize) || !ReadJSValueAsUint64(ctx, vSize,size)) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.sizeof] The first argument must be a valid Type");
+                return JS_EXCEPTION;
+            }
+
+            return NewUint64(ctx, size).get(1);
+        }
+        static JSValue navigator_dll_malloc(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.malloc] Only 1 argument is supported: (size)");
+                return JS_EXCEPTION;
+            }
+            JSV vValue = JSV(ctx, &argumentValues[0]);
+
+            CJSSize size = 0;
+            if (!JS_IsBigInt(vValue.get(0)) || !ReadJSValueAsUint64(ctx, vValue, size)) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.malloc] The first argument must be a BigInt");
+                return JS_EXCEPTION;
+            }
+
+            JSMData* jsmdPtr = nullptr;
+            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
+                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
+                return JS_EXCEPTION;
+            }
+
+            void* ptr = malloc((size_t)size);
+            if (!ptr) {
+                JS_ThrowInternalError(ctx, "[navigator.dll.malloc] Failed to malloc");
+                return JS_EXCEPTION;
+            }
+
+            jsmdPtr->cjsByteDataList_mtx.lock();
+            CJSID id = GetNewCJSByteId(ctx);
+            jsmdPtr->cjsByteDataList[id].data = ptr;
+            jsmdPtr->cjsByteDataList[id].size = size;
+            jsmdPtr->cjsByteDataList_mtx.unlock();
+
+            JSV type = NewObject(ctx);
+            SetSymbolName(ctx, type, "TypeVoidPtr");
+            SetAttribute(ctx, type, "type", "void*");
+            SetAttribute(ctx, type, "value", NewUint64(ctx, reinterpret_cast<unsigned long long>(ptr)));
+            SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(void*)));
+            return type.get(1);
+        }
+        static JSValue navigator_dll_free(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.free] Only 1 argument is supported: (ptr)");
+                return JS_EXCEPTION;
+            }
+            JSV vValue = JSV(ctx, &argumentValues[0]);
+
+            CJSSize size = 0;
+            JSV vPtr = {};
+            ULL ptr = 0;
+            if (!JS_IsObject(vValue.get(0)) || !(GetSymbolName(ctx, vValue).starts_with("Type") && GetSymbolName(ctx, vValue).ends_with("Ptr")) || !ReadObjectProperty(ctx, vValue, "value", vPtr) || !ReadJSValueAsUint64(ctx, vPtr, ptr)) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.free] The first argument must be a valid TypeVoidPtr");
+                return JS_EXCEPTION;
+            }
+
+            JSMData* jsmdPtr = nullptr;
+            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
+                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
+                return JS_EXCEPTION;
+            }
+
+            jsmdPtr->cjsByteDataList_mtx.lock();
+            SetAttribute(ctx, vValue, "value", NewUint64(ctx, 0));
+            std::erase_if(jsmdPtr->cjsByteDataList, [&](const std::pair<ULL, CJSHeapData>& pair) {
+                return pair.second.data == (void*)ptr;
+                });
+            free((void*)ptr);
+            jsmdPtr->cjsByteDataList_mtx.unlock();
+
+            return JS_UNDEFINED;
+        }
+        static JSValue navigator_dll_size(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.size] Only 1 argument is supported: (TypeVoidPtr)");
+                return JS_EXCEPTION;
+            }
+            JSV vValue = JSV(ctx, &argumentValues[0]);
+
+            CJSSize size = 0;
+            JSV vPtr = {};
+            ULL ptr = 0;
+            if (!JS_IsObject(vValue.get(0)) || !(GetSymbolName(ctx, vValue).starts_with("Type") && GetSymbolName(ctx, vValue).ends_with("Ptr")) || !ReadObjectProperty(ctx, vValue, "value", vPtr) || !ReadJSValueAsUint64(ctx, vPtr, ptr)) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.size] The first argument must be a valid TypeVoidPtr");
+                return JS_EXCEPTION;
+            }
+
+            JSMData* jsmdPtr = nullptr;
+            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
+                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
+                return JS_EXCEPTION;
+            }
+
+            jsmdPtr->cjsByteDataList_mtx.lock_shared();
+            auto it = std::find_if(jsmdPtr->cjsByteDataList.begin(), jsmdPtr->cjsByteDataList.end(), [&](const std::pair<ULL, CJSHeapData>& pair) {
+                return pair.second.data == (void*)ptr;
+                });
+            if (it == jsmdPtr->cjsByteDataList.end()) {
+                jsmdPtr->cjsByteDataList_mtx.unlock_shared();
+                JS_ThrowTypeError(ctx, "[navigator.dll.assign] The first argument must be a valid TypeVoidPtr");
+                return JS_EXCEPTION;
+            }
+            size = it->second.size;
+            jsmdPtr->cjsByteDataList_mtx.unlock_shared();
+
+            return NewUint64(ctx, size).get(1);
+        }
+        static JSValue navigator_dll_assign(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 2) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.assign] Only 2 arguments are supported: (type, source)");
+                return JS_EXCEPTION;
+            }
+            JSV vValue = JSV(ctx, &argumentValues[0]);
+            JSV vTyped = JSV(ctx, &argumentValues[1]);
+
+            CJSSize size = 0;
+            JSV vPtr = {};
+            ULL ptr = 0;
+
+            if (!JS_IsObject(vValue.get(0)) || !(GetSymbolName(ctx, vValue).starts_with("Type") && GetSymbolName(ctx, vValue).ends_with("Ptr")) || !ReadObjectProperty(ctx, vValue, "value", vPtr) || !ReadJSValueAsUint64(ctx, vPtr, ptr)) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.assign] The first argument must be a valid TypeVoidPtr");
+                return JS_EXCEPTION;
+            }
+
+            JSMData* jsmdPtr = nullptr;
+            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
+                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
+                return JS_EXCEPTION;
+            }
+
+            jsmdPtr->cjsByteDataList_mtx.lock_shared();
+            auto it = std::find_if(jsmdPtr->cjsByteDataList.begin(), jsmdPtr->cjsByteDataList.end(), [&](const std::pair<ULL, CJSHeapData>& pair) {
+                return pair.second.data == (void*)ptr;
+                });
+            if (it == jsmdPtr->cjsByteDataList.end()) {
+                size = ULLONG_MAX;
+            }
+            else size = it->second.size;
+            jsmdPtr->cjsByteDataList_mtx.unlock_shared();
+
+            JSV vType = {};
+            std::string type = "";
+            if (!JS_IsObject(vTyped.get(0)) || !GetSymbolName(ctx, vTyped).starts_with("Type") || !ReadObjectProperty(ctx, vTyped, "type", vType) || !ReadJSValueAsString(ctx, vType, type)) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.assign] The second argument must be a valid Type");
+                return JS_EXCEPTION;
+            }
+
+            JSV vVal = {};
+            ULL valueBigInt = 0;
+            double valueFloat = 0.0;
+            std::string valueString = "";
+            bool valueBool = false;
+            if (type == "void*" || type == "unsigned long long" || type == "unsigned long" || type == "unsigned int" ||
+                type == "long" || type == "long long" || type == "int" || type == "short" || type == "unsigned short" ||
+                type == "char" || type == "unsigned char" || type == "wchar_t") {
+                if (!ReadObjectProperty(ctx, vTyped, "value", vVal) || !ReadJSValueAsUint64(ctx, vVal, valueBigInt)) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.assign] The second argument must be a valid Type");
+                    return JS_EXCEPTION;
+                }
+            }
+            else if (type == "float" || type == "double" || type == "long double") {
+                if (!ReadObjectProperty(ctx, vTyped, "value", vVal) || !ReadJSValueAsDouble(ctx, vVal, valueFloat)) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.assign] The second argument must be a valid Type");
+                    return JS_EXCEPTION;
+                }
+            }
+            else if (type == "char*" || type == "wchar_t*") {
+                if (!ReadObjectProperty(ctx, vTyped, "value", vVal) || !ReadJSValueAsString(ctx, vVal, valueString)) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.assign] The second argument must be a valid Type");
+                    return JS_EXCEPTION;
+                }
+            }
+            else if (type == "bool") {
+                if (!ReadObjectProperty(ctx, vTyped, "value", vVal) || !ReadJSValueAsBool(ctx, vVal, valueBool)) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.assign] The second argument must be a valid Type");
+                    return JS_EXCEPTION;
+                }
+            }
+
+            if (type == "void*") {
+                *((void**)ptr) = (void*)valueBigInt;
+            }
+            else if (type == "unsigned long long") {
+                *((unsigned long long*)ptr) = valueBigInt;
+            }
+            else if (type == "unsigned long") {
+                *((unsigned long*)ptr) = (unsigned long)valueBigInt;
+            }
+            else if (type == "unsigned int") {
+                *((unsigned int*)ptr) = (unsigned int)valueBigInt;
+            }
+            else if (type == "long") {
+                *((long*)ptr) = (long)valueBigInt;
+            }
+            else if (type == "long long") {
+                *((long long*)ptr) = (long long)valueBigInt;
+            }
+            else if (type == "int") {
+                *((int*)ptr) = (int)valueBigInt;
+            }
+            else if (type == "float") {
+                *((float*)ptr) = (float)valueFloat;
+            }
+            else if (type == "double") {
+                *((double*)ptr) = valueFloat;
+            }
+            else if (type == "char") {
+                *((char*)ptr) = (char)valueBigInt;
+            }
+            else if (type == "unsigned char") {
+                *((unsigned char*)ptr) = (unsigned char)valueBigInt;
+            }
+            else if (type == "short") {
+                *((short*)ptr) = (short)valueBigInt;
+            }
+            else if (type == "unsigned short") {
+                *((unsigned short*)ptr) = (unsigned short)valueBigInt;
+            }
+            else if (type == "long double") {
+                *((long double*)ptr) = (long double)valueFloat;
+            }
+            else if (type == "wchar_t") {
+                *((wchar_t*)ptr) = (wchar_t)valueBigInt;
+            }
+            else if (type == "char*") {
+                char* dest = (char*)ptr;
+                if (valueString.size() + 1 > size) {
+                    std::memcpy(dest, valueString.data(), (size_t)(size - 1));
+                    dest[size - 1] = '\0';
+                }
+                else {
+                    std::memcpy(dest, valueString.data(), valueString.size() + 1);
+                }
+            }
+            else if (type == "wchar_t*") {
+                std::wstring wstr = stringToWstring(valueString);
+                wchar_t* dest = (wchar_t*)ptr;
+                const unsigned long long maxElem = size / sizeof(wchar_t);
+                if (wstr.size() + 1 > maxElem) {
+                    std::wmemcpy(dest, wstr.data(), (size_t)(maxElem - 1));
+                    dest[maxElem - 1] = L'\0';
+                }
+                else {
+                    std::wmemcpy(dest, wstr.data(), wstr.size() + 1);
+                }
+            }
+            else if (type == "bool") {
+                *((bool*)ptr) = valueBool;
+            }
+
+            return JS_UNDEFINED;
+        }
+        static JSValue navigator_dll_read(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 2 && argumentCount != 3) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.read] Only 2 or 3 arguments are supported: (ptr, output, size?)");
+                return JS_EXCEPTION;
+            }
+            JSV vValue = JSV(ctx, &argumentValues[0]);
+            JSV vTyped = JSV(ctx, &argumentValues[1]);
+
+            CJSSize size = 0;
+            JSV vPtr = {};
+            ULL ptr = 0;
+            if (!JS_IsObject(vValue.get(0)) || !(GetSymbolName(ctx, vValue).starts_with("Type") && GetSymbolName(ctx, vValue).ends_with("Ptr")) || !ReadObjectProperty(ctx, vValue, "value", vPtr) || !ReadJSValueAsUint64(ctx, vPtr, ptr)) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.read] The first argument must be a valid TypeVoidPtr");
+                return JS_EXCEPTION;
+            }
+
+            JSMData* jsmdPtr = nullptr;
+            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
+                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
+                return JS_EXCEPTION;
+            }
+
+            jsmdPtr->cjsByteDataList_mtx.lock_shared();
+            auto it = std::find_if(jsmdPtr->cjsByteDataList.begin(), jsmdPtr->cjsByteDataList.end(), [&](const std::pair<ULL, CJSHeapData>& pair) {
+                return pair.second.data == (void*)ptr;
+                });
+            if (it == jsmdPtr->cjsByteDataList.end()) {
+                size = ULLONG_MAX;
+            }
+            else size = it->second.size;
+            jsmdPtr->cjsByteDataList_mtx.unlock_shared();
+
+            if (argumentCount >= 3) {
+                JSV vSize = JSV(ctx, &argumentValues[2]);
+                if (!ReadJSValueAsUint64(ctx, vSize, size)) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.read] The third argument must be a BigInt");
+                    return JS_EXCEPTION;
+                }
+            }
+
+            JSV vType = {};
+            std::string type = "";
+            if (!JS_IsObject(vTyped.get(0)) || !GetSymbolName(ctx, vTyped).starts_with("Type") || !ReadObjectProperty(ctx, vTyped, "type", vType) || !ReadJSValueAsString(ctx, vType, type)) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.read] The second argument must be a valid Type");
+                return JS_EXCEPTION;
+            }
+
+            JSV vVal = {};
+            ULL valueBigInt = 0;
+            double valueFloat = 0.0;
+            std::string valueString = "";
+            bool valueBool = false;
+
+            if (ptr == 0) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.read] Cannot read the value of 'nullptr'");
+                return JS_EXCEPTION;
+            }
+            else if (type == "void*") {
+                valueBigInt = (unsigned long long)(*((void**)ptr));
+            }
+            else if (type == "unsigned long long") {
+                valueBigInt = (*((unsigned long long*)ptr));
+            }
+            else if (type == "unsigned long") {
+                valueBigInt = (unsigned long long)(*((unsigned long*)ptr));
+            }
+            else if (type == "unsigned int") {
+                valueBigInt = (unsigned long long)(*((unsigned int*)ptr));
+            }
+            else if (type == "long") {
+                valueBigInt = (unsigned long long)(*((long*)ptr));
+            }
+            else if (type == "long long") {
+                valueBigInt = (unsigned long long)(*((long long*)ptr));
+            }
+            else if (type == "int") {
+                valueBigInt = (unsigned long long)(*((int*)ptr));
+            }
+            else if (type == "float") {
+                valueFloat = (double)(*((float*)ptr));
+            }
+            else if (type == "double") {
+                valueFloat = (*((double*)ptr));
+            }
+            else if (type == "char") {
+                valueBigInt = (unsigned long long)(*((char*)ptr));
+            }
+            else if (type == "unsigned char") {
+                valueBigInt = (unsigned long long)(*((unsigned char*)ptr));
+            }
+            else if (type == "short") {
+                valueBigInt = (unsigned long long)(*((short*)ptr));
+            }
+            else if (type == "unsigned short") {
+                valueBigInt = (unsigned long long)(*((unsigned short*)ptr));
+            }
+            else if (type == "long double") {
+                valueFloat = (double)(*((long double*)ptr));
+            }
+            else if (type == "wchar_t") {
+                valueBigInt = (unsigned long long)(*((wchar_t*)ptr));
+            }
+            else if (type == "char*") {
+                char* p = (char*)(ptr);
+                size_t len = strnlen(p, (size_t)size);
+                valueString.assign(p, len);
+            }
+            else if (type == "wchar_t*") {
+                if (size < sizeof(wchar_t)) {
+                    valueString.clear();
+                }
+                else {
+                    wchar_t* p = (wchar_t*)(ptr);
+                    size_t maxElem = (size_t)(size / sizeof(wchar_t));
+                    size_t len = wcsnlen(p, maxElem);
+                    std::wstring wstr(p, len);
+                    valueString = wstringToString(wstr);
+                }
+            }
+            else if (type == "bool") {
+                valueBool = (*((bool*)ptr));
+            }
+
+            if (type == "void*" || type == "unsigned long long" || type == "unsigned long" || type == "unsigned int" ||
+                type == "long" || type == "long long" || type == "int" || type == "short" || type == "unsigned short" ||
+                type == "char" || type == "unsigned char" || type == "wchar_t") {
+                SetAttribute(ctx, vTyped, "value", NewUint64(ctx, valueBigInt));
+            }
+            else if (type == "float" || type == "double" || type == "long double") {
+                SetAttribute(ctx, vTyped, "value", NewNumber(ctx, valueFloat));
+            }
+            else if (type == "char*" || type == "wchar_t*") {
+                SetAttribute(ctx, vTyped, "value", NewString(ctx, valueString));
+            }
+            else if (type == "bool") {
+                SetAttribute(ctx, vTyped, "value", NewBool(ctx, valueBool));
+            }
+            return JS_UNDEFINED;
+        }
+        static JSValue navigator_dll_load(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount < 1 || argumentCount > 2) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.load] Only 1 or 2 arguments are supported: (libFileName, config?)");
+                return JS_EXCEPTION;
+            }
+            JSV vLibFileName = JSV(&argumentValues[0]);
+            std::string libFileName = "";
+            if (!JS_IsString(vLibFileName.get(0)) || !ReadJSValueAsString(ctx, vLibFileName, libFileName)) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.load] The first argument must be a string");
+                return JS_EXCEPTION;
+            }
+
+            int abi = 0;
+            if (argumentCount >= 2) {
+                JSV vConfig = JSV(&argumentValues[1]);
+                double config = 0;
+                if (ReadJSValueAsDouble(ctx, vConfig, config)) {
+                    abi = (int)config;
+                }
+            }
+
+            JSMData* jsmdPtr = nullptr;
+            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
+                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
+                return JS_EXCEPTION;
+            }
+
+            HMODULE lib = LoadLibraryW(stringToWstring(libFileName).c_str());
+            if (!lib) {
+                JS_ThrowInternalError(ctx, "[navigator.dll.load] Failed to load the library");
+                return JS_EXCEPTION;
+            }
+
+            jsmdPtr->hDllList_mtx.lock();
+            int id = GetNewDllId(ctx);
+            jsmdPtr->hDllList[id] = lib;
+            jsmdPtr->hDllList_mtx.unlock();
+
+            struct DllExportData {
+                std::string name = "";
+                ULONG flags = 0;
+                void* address = nullptr;
+            };
+            std::vector<DllExportData> data = {};
+
+            PIMAGE_DOS_HEADER pDos = (PIMAGE_DOS_HEADER)lib;
+            PIMAGE_NT_HEADERS pNt = (PIMAGE_NT_HEADERS)((uint8_t*)lib + pDos->e_lfanew);
+            auto& exportDir = pNt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+            if (exportDir.Size != 0) {
+                PIMAGE_EXPORT_DIRECTORY pExports = (PIMAGE_EXPORT_DIRECTORY)((uint8_t*)lib + exportDir.VirtualAddress);
+                DWORD* pNames = (DWORD*)((uint8_t*)lib + pExports->AddressOfNames);
+                for (DWORD i = 0; i < pExports->NumberOfNames; i++) {
+                    const char* szName = (const char*)((uint8_t*)lib + pNames[i]);
+                    data.push_back({ .name = szName, .address = GetProcAddress(lib, szName) });
+                }
+            }
+
+            JSV returnValue = NewObject(ctx);
+            SetSymbolName(ctx, returnValue, "LoadDllNavigatorData");
+            JSV exports = NewObject(ctx, returnValue, "exports");
+            for (const DllExportData& dt : data) {
+                AppendMethod(ctx, exports, dt.name, [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int magic, void* opaque) -> JSValue {
+                    if (argumentCount < 1) {
+                        JS_ThrowTypeError(ctx, "[navigator.dll.load->exports.call] Only 1 or more arguments are supported: (out_returnValue, ...args?)");
+                        return JS_EXCEPTION;
+                    }
+                    ffi_cif cif;
+                    ffi_type* returnType = nullptr;
+                    struct TypedData {
+                        std::string type = "";
+                        std::string value_string = "";
+                    };
+                    std::vector<TypedData> types((size_t)argumentCount - 1);
+                    std::vector<ffi_type*> args((size_t)argumentCount - 1);
+                    for (size_t i = 0; i < (size_t)argumentCount; i++) {
+                        JSV vTyped = JSV(ctx, &argumentValues[i]);
+                        JSV vType = {};
+                        std::string type = "";
+                        ffi_type* t = nullptr;
+                        if (!JS_IsObject(vTyped.get(0)) || !GetSymbolName(ctx, vTyped).starts_with("Type") || !ReadObjectProperty(ctx, vTyped, "type", vType) || !ReadJSValueAsString(ctx, vType, type)) {
+                            JS_ThrowTypeError(ctx, "[navigator.dll.load->exports.call] The argument must be a valid Type");
+                            return JS_EXCEPTION;
+                        }
+                        if (type == "void") {
+                            t = &ffi_type_void;
+                        }
+                        else if (type == "void*") {
+                            t = &ffi_type_pointer;
+                        }
+                        else if (type == "char*" || type == "wchar_t*") {
+                            t = &ffi_type_pointer;
+                            JSV vValue = {};
+                            std::string value = "";
+                            if (!ReadObjectProperty(ctx, vTyped, "value", vValue) || !ReadJSValueAsString(ctx, vValue, value)) {
+                                JS_ThrowTypeError(ctx, "[navigator.dll.load->exports.call] The argument must be a valid Type");
+                                return JS_EXCEPTION;
+                            }
+                            types[i - 1].value_string = value;
+                        }
+                        else if (type == "unsigned long long") {
+                            t = &ffi_type_uint64;
+                        }
+                        else if (type == "unsigned long") {
+                            t = &ffi_type_uint32;
+                        }
+                        else if (type == "unsigned int") {
+                            t = &ffi_type_uint32;
+                        }
+                        else if (type == "long") {
+                            t = &ffi_type_sint32;
+                        }
+                        else if (type == "int") {
+                            t = &ffi_type_sint32;
+                        }
+                        else if (type == "long long") {
+                            t = &ffi_type_sint64;
+                        }
+                        else if (type == "float") {
+                            t = &ffi_type_float;
+                        }
+                        else if (type == "double") {
+                            t = &ffi_type_double;
+                        }
+                        else if (type == "char") {
+                            t = &ffi_type_sint8;
+                        }
+                        else if (type == "unsigned char") {
+                            t = &ffi_type_uint8;
+                        }
+                        else if (type == "short") {
+                            t = &ffi_type_sint16;
+                        }
+                        else if (type == "unsigned short") {
+                            t = &ffi_type_uint16;
+                        }
+                        else if (type == "long double") {
+                            t = &ffi_type_longdouble;
+                        }
+                        else if (type == "wchar_t") {
+                            t = &ffi_type_uint16;
+                        }
+                        else if (type == "bool") {
+                            t = &ffi_type_uint8;
+                        }
+                        else {
+                            JS_ThrowTypeError(ctx, "[navigator.dll.load->exports.call] The argument must be a valid Type");
+                            return JS_EXCEPTION;
+                        }
+                        if (i == 0) {
+                            returnType = t;
+                        }
+                        else { 
+                            types[i - 1].type = type;
+                            args[i - 1] = t;
+                        }
+                    }
+                    ffi_abi abi = FFI_DEFAULT_ABI;
+                    if (magic & 0b00000001) {
+#if defined(_WIN32) && defined(_WIN64)
+                        abi = FFI_WIN64;
+#endif
+                    }
+                    else if (magic & 0b00000010) {
+#if defined(_WIN32) && !defined(_WIN64)
+                        abi = FFI_STDCALL;
+#endif
+                    }
+                    else if (magic & 0b00000100) {
+#if defined(_WIN32) && !defined(_WIN64)
+                        abi = FFI_MS_CDECL;
+#endif
+                    }
+                    ffi_status status = ffi_prep_cif(&cif, abi, (unsigned int)args.size(), returnType, args.data());
+                    if (status != FFI_OK) {
+                        JS_ThrowTypeError(ctx, "[navigator.dll.load->exports.call] The arguments are not valid");
+                        return JS_EXCEPTION;
+                    }
+                    void* return_buf = nullptr;
+                    if (returnType != &ffi_type_void) {
+                        size_t sz = returnType->size;
+                        const size_t min_ret_buf = sizeof(uintptr_t);
+                        if (sz < min_ret_buf) sz = min_ret_buf;
+                        return_buf = _malloca(sz);
+                    }
+                    JSV ret = {};
+                    std::vector<JSV> needReleaseList = {};
+                    std::vector<void*> argv(args.size());
+                    auto freeValue = [&]() {
+                        if (return_buf) _freea(return_buf);
+                        for (JSV jsv : needReleaseList) {
+                            if (jsv.isValid()) {
+                                JSValue cargs[1] = {
+                                    { jsv.get(0) },
+                                };
+                                JSV(ctx, navigator_dll_free(ctx, thisVal, 1, cargs)).cset(1);
+                            }
+                        }
+                        for (void* ptr : argv) {
+                            if (ptr) _freea(ptr);
+                        }
+                        };
+                    for (size_t i = 0; i < args.size(); i++) {
+                        void* param_buf = _malloca(args[i]->size);
+                        if (param_buf == nullptr) {
+                            freeValue();
+                            JS_ThrowInternalError(ctx, "[navigator.dll.load->exports.call] Failed to alloc the memory of argument value");
+                            return JS_EXCEPTION;
+                        }
+                        if (types[i].type == "char*" || types[i].type == "wchar_t*") {
+                            JSV charPtr = (types[i].type == "char*") ? JSV(ctx, navigator_dll_malloc(ctx, thisVal, 1, NewUint64(ctx, types[i].value_string.size() + 1).getPtr())).cset(1) : JSV(ctx, navigator_dll_malloc(ctx, thisVal, 1, NewUint64(ctx, (stringToWstring(types[i].value_string).size() + 1) * sizeof(wchar_t)).getPtr())).cset(1);
+                            if (JS_IsException(charPtr.get(0))) {
+                                freeValue();
+                                JS_ThrowInternalError(ctx, "[navigator.dll.load->exports.call] Failed to alloc the memory of argument value");
+                                return JS_EXCEPTION;
+                            }
+                            needReleaseList.push_back(charPtr);
+                            JSValue cargs1[2] = {
+                                { charPtr.get(0) },
+                                { argumentValues[i + 1] }
+                            };
+                            ret = JSV(ctx, navigator_dll_assign(ctx, thisVal, 2, cargs1)).cset(1);
+                            if (JS_IsException(ret.get(0))) {
+                                freeValue();
+                                JS_ThrowInternalError(ctx, "[navigator.dll.load->exports.call] Failed to read argument value");
+                                return JS_EXCEPTION;
+                            }
+                            JSV voidPtr = JSV(ctx, navigator_dll_voidPtr(ctx, thisVal, 1, NewUint64(ctx, (unsigned long long)param_buf).getPtr())).cset(1);
+                            JSValue cargs2[2] = {
+                                { voidPtr.get(0) },
+                                { charPtr.get(0) }
+                            };
+                            ret = JSV(ctx, navigator_dll_assign(ctx, thisVal, 2, cargs2)).cset(1);
+                            if (JS_IsException(ret.get(0))) {
+                                freeValue();
+                                JS_ThrowInternalError(ctx, "[navigator.dll.load->exports.call] Failed to read argument value");
+                                return JS_EXCEPTION;
+                            }
+                        }
+                        else {
+                            JSV voidPtr = JSV(ctx, navigator_dll_voidPtr(ctx, thisVal, 1, NewUint64(ctx, (unsigned long long)param_buf).getPtr())).cset(1);
+                            JSValue cargs[2] = {
+                                { voidPtr.get(0) },
+                                { argumentValues[i + 1] }
+                            };
+                            ret = JSV(ctx, navigator_dll_assign(ctx, thisVal, 2, cargs)).cset(1);
+                            if (JS_IsException(ret.get(0))) {
+                                freeValue();
+                                JS_ThrowInternalError(ctx, "[navigator.dll.load->exports.call] Failed to read argument value");
+                                return JS_EXCEPTION;
+                            }
+                        }
+
+                        argv[i] = param_buf;
+                    }
+                    void (*pfn)(void) = reinterpret_cast<void (*)(void)>(opaque);
+                    ffi_call(&cif, pfn, return_buf, argv.data());
+                    if (returnType != &ffi_type_void) {
+                        JSV returnVoidPtr = JSV(ctx, navigator_dll_voidPtr(ctx, thisVal, 1, NewUint64(ctx, (unsigned long long)return_buf).getPtr())).cset(1);
+                        JSValue cargs[2] = {
+                            { returnVoidPtr.get(0) },
+                            { argumentValues[0] }
+                        };
+                        ret = JSV(ctx, navigator_dll_read(ctx, thisVal, 2, cargs)).cset(1);
+                        if (JS_IsException(ret.get(0))) {
+                            freeValue();
+                            JS_ThrowInternalError(ctx, "[navigator.dll.load->exports.call] Failed to assign return value");
+                            return JS_EXCEPTION;
+                        }
+                    }
+                    freeValue();
+                    return JS_UNDEFINED;
+                    }, abi, dt.address);
+            }
+            AppendMethod(ctx, returnValue, "close", [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int id, void* opaque) -> JSValue {
+
+                JSMData* jsmdPtr = nullptr;
+                if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
+                    JS_ThrowInternalError(ctx, "[native code] This context is invalid");
+                    return JS_EXCEPTION;
+                }
+
+                jsmdPtr->hDllList_mtx.lock();
+                auto it = jsmdPtr->hDllList.find(id);
+                if (it == jsmdPtr->hDllList.end()) {
+                    jsmdPtr->hDllList_mtx.unlock();
+                    return JS_UNDEFINED;
+                }
+                if (it->second != NULL) FreeLibrary(it->second);
+                jsmdPtr->hDllList.erase(it);
+                jsmdPtr->hDllList_mtx.unlock();
+
+                ClearObject(ctx, JSV(ctx, thisVal));
+
+                return JS_UNDEFINED;
+                }, id);
+            SetAttribute(ctx, returnValue, GetProperty(ctx, NewGlobalObject(ctx), {
+    { "Symbol" },
+    { "dispose" }
+                }), GetProperty(ctx, returnValue, "close"));
+
+            return returnValue.get(1);
+        }
+        static JSValue navigator_dll_readVoidPtrAsBinary(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 1 && argumentCount != 2) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.readVoidPtrAsBinary] Only 1 or 2 arguments are supported: (ptr, size?)");
+                return JS_EXCEPTION;
+            }
+            JSV vValue = JSV(ctx, &argumentValues[0]);
+
+            CJSSize size = 0;
+            JSV vPtr = {};
+            ULL ptr = 0;
+            if (!JS_IsObject(vValue.get(0)) || !(GetSymbolName(ctx, vValue).starts_with("Type") && GetSymbolName(ctx, vValue).ends_with("Ptr")) || !ReadObjectProperty(ctx, vValue, "value", vPtr) || !ReadJSValueAsUint64(ctx, vPtr, ptr)) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.readVoidPtrAsBinary] The first argument must be a valid TypeVoidPtr");
+                return JS_EXCEPTION;
+            }
+
+            JSMData* jsmdPtr = nullptr;
+            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
+                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
+                return JS_EXCEPTION;
+            }
+
+            jsmdPtr->cjsByteDataList_mtx.lock_shared();
+            auto it = std::find_if(jsmdPtr->cjsByteDataList.begin(), jsmdPtr->cjsByteDataList.end(), [&](const std::pair<ULL, CJSHeapData>& pair) {
+                return pair.second.data == (void*)ptr;
+                });
+            if (it == jsmdPtr->cjsByteDataList.end()) {
+                if (argumentCount < 2) {
+                    jsmdPtr->cjsByteDataList_mtx.unlock_shared();
+                    JS_ThrowTypeError(ctx, "[navigator.dll.readVoidPtrAsBinary] The second argument must be a BigInt when the pointer isn't created by the engine");
+                    return JS_EXCEPTION;
+                }
+                JSV vSize = JSV(ctx, &argumentValues[1]);
+                if (!ReadJSValueAsUint64(ctx, vSize, size)) {
+                    jsmdPtr->cjsByteDataList_mtx.unlock_shared();
+                    JS_ThrowTypeError(ctx, "[navigator.dll.readVoidPtrAsBinary] The second argument must be a valid BigInt");
+                    return JS_EXCEPTION;
+                }
+            }
+            else size = it->second.size;
+            jsmdPtr->cjsByteDataList_mtx.unlock_shared();
+
+            BYTEBUFFER buffer(reinterpret_cast<const std::uint8_t*>(ptr), reinterpret_cast<const std::uint8_t*>(ptr) + size);
+            return NewUint8Array(ctx, buffer).get(1);
+        }
+        static JSValue navigator_dll_writeVoidPtrWithBinary(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 2 && argumentCount != 3) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.writeVoidPtrWithBinary] Only 2 argument are supported: (ptr, data)");
+                return JS_EXCEPTION;
+            }
+            JSV vValue = JSV(ctx, &argumentValues[0]);
+            JSV vData = JSV(ctx, &argumentValues[1]);
+            CJSSize size = 0;
+            JSV vPtr = {};
+            ULL ptr = 0;
+            if (!JS_IsObject(vValue.get(0)) || !(GetSymbolName(ctx, vValue).starts_with("Type") && GetSymbolName(ctx, vValue).ends_with("Ptr")) || !ReadObjectProperty(ctx, vValue, "value", vPtr) || !ReadJSValueAsUint64(ctx, vPtr, ptr)) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.writeVoidPtrWithBinary] The first argument must be a valid TypeVoidPtr");
+                return JS_EXCEPTION;
+            }
+            BYTEBUFFER data = {};
+            if (!ReadJSValueAsUint8Array(ctx, vData, data)) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.writeVoidPtrWithBinary] The second argument must be a Uint8Array");
+                return JS_EXCEPTION;
+            }
+            JSMData* jsmdPtr = nullptr;
+            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
+                JS_ThrowInternalError(ctx, "[native code] This context is invalid");
+                return JS_EXCEPTION;
+            }
+            jsmdPtr->cjsByteDataList_mtx.lock_shared();
+            auto it = std::find_if(jsmdPtr->cjsByteDataList.begin(), jsmdPtr->cjsByteDataList.end(), [&](const std::pair<ULL, CJSHeapData>& pair) {
+                return pair.second.data == (void*)ptr;
+                });
+            if (it == jsmdPtr->cjsByteDataList.end()) {
+                size = ULLONG_MAX;
+            }
+            else size = it->second.size;
+            jsmdPtr->cjsByteDataList_mtx.unlock_shared();
+            std::memcpy((void*)ptr, data.data(), std::min<size_t>(data.size(), (size_t)size));
+            return JS_UNDEFINED;
+        }
 
         static bool ArrayInsert(JSContext* ctx, JSV array, uint64_t insert_idx, JSV value) {
             if (!JS_IsArray(array.get(0))) return false;
@@ -16435,6 +17680,19 @@ namespace cjs {
             return JSV(ctx, &ppt).cset(1);
         }
 
+        template<typename T, typename... Args>
+        static T* JSNew(JSContext* ctx, Args&&... args) {
+            void* mem = js_malloc_rt(JS_GetRuntime(ctx), sizeof(T));
+            if (!mem) return nullptr;
+            return new(mem) T(std::forward<Args>(args)...);
+        }
+        template<typename T>
+        static T* JSMalloc(JSContext* ctx) {
+            return(T*)js_malloc_rt(JS_GetRuntime(ctx), sizeof(T));
+        }
+        static void* JSMalloc(JSContext* ctx, size_t size) {
+            return js_malloc_rt(JS_GetRuntime(ctx), size);
+        }
         static bool ClearObject(JSContext* ctx, JSValue& jsv) {
 
             if (!JS_IsObject(jsv)) {
@@ -16496,6 +17754,10 @@ namespace cjs {
             }
 
             return true;
+        }
+        static bool ClearObject(JSContext* ctx, JSV jsva) {
+            JSValue jsv = jsva.get(0);
+            return ClearObject(ctx, jsv);
         }
         static JSV NewGlobalObject(JSContext* ctx) {
             return JSV(ctx, JS_GetGlobalObject(ctx)).cset(1);
@@ -16577,33 +17839,15 @@ namespace cjs {
             return JSV(ctx, &array).cset(1);
         }
 
-        static bool FreeObject(JSContext* ctx, JSV targetObject) {
-            if (!JS_IsObject(targetObject.get(0))) return false;
-            JS_FreeValue(ctx, targetObject.get(0));
-            targetObject.set(-1);
-            return true;
-        }
-
-        static bool AppendMethod(JSContext* ctx, JSV targetObject, std::string name, JSV func, int64_t flags = -1) {
-            if (ctx == nullptr) return false;
-            if (!JS_IsFunction(ctx, func.get(0))) {
-                return false;
-            }
-            if (flags != -1 && flags >= 0) {
-                return JS_DefinePropertyValueStr(ctx, targetObject.get(0), name.c_str(), func.get(1), static_cast<unsigned int>(flags)) == 1;
-            }
-            return JS_SetPropertyStr(ctx, targetObject.get(0), name.c_str(), func.get(1)) == 1;
-        }
-        template<typename Func>
-        static bool AppendMethod(JSContext* ctx, JSV targetObject, std::string name, Func func, int argLength = -1, int64_t flags = -1) {
+        static bool AppendMethod(JSContext* ctx, JSV targetObject, std::string name, JSCFunction func, int argLength = -1, int64_t flags = -1) {
             if (ctx == nullptr) return false;
             if (!JS_IsObject(targetObject.get())) return false;
-            JSValue jsFunc = JS_NewCFunction(ctx, func, name.c_str(), argLength);
-            JSV jfc = JSV(ctx, jsFunc);
-            jfc.set(1);
-            bool result = AppendMethod(ctx, targetObject, name, jfc, flags);
-
-            return result;
+            return SetAttribute(ctx, targetObject, name, NewFunction(ctx, name, func, argLength), flags);
+        }
+        static bool AppendMethod(JSContext* ctx, JSV targetObject, std::string name, JSCClosure func, int magic = -1, void* opaque = nullptr, JSCClosureFinalizerFunc onRelease = nullptr, int argLength = 0, int64_t flags = -1) {
+            if (ctx == nullptr) return false;
+            if (!JS_IsObject(targetObject.get())) return false;
+            return SetAttribute(ctx, targetObject, name, NewFunction(ctx, name, func, magic, opaque, onRelease, argLength, flags), flags);
         }
 
         static std::string GetSymbolName(JSContext* ctx, JSV targetObject) {
@@ -17097,14 +18341,6 @@ namespace cjs {
                 return false;
 
             formData.clear();
-
-
-
-
-
-
-
-
             size_t pos = 0;
 
             while (pos + 1 < len && !(data[pos] == '-' && data[pos + 1] == '-'))
@@ -17114,25 +18350,15 @@ namespace cjs {
 
             size_t boundaryStart = pos;
             pos += 2;
-
             while (pos < len && data[pos] != '\r' && data[pos] != '\n')
                 pos++;
             if (pos >= len)
                 return false;
-
             std::string boundary((const char*)data + boundaryStart, pos - boundaryStart);
             std::string endBoundary = boundary + "--";
-
-
-
-
             pos = boundaryStart + boundary.size();
             while (pos < len && (data[pos] == '\r' || data[pos] == '\n'))
                 pos++;
-
-
-
-
             while (pos < len) {
                 if (pos + endBoundary.size() <= len) {
                     if (memcmp(data + pos, endBoundary.data(), endBoundary.size()) == 0)
@@ -17258,8 +18484,7 @@ namespace cjs {
             return !formData.empty();
         }
 
-        template<typename Func>
-        static JSV NewIterator(JSContext* ctx, JSV targetObject, std::string name, Func next, int64_t flags = -1) {
+        static JSV NewIterator(JSContext* ctx, JSV targetObject, std::string name, JSCFunction next, int64_t flags = -1) {
             JSV iterator = NewObject(ctx);
             if (!iterator.isValid()) return {};
 
@@ -17281,15 +18506,37 @@ namespace cjs {
 
             return iterator;
         }
-        template<typename Func>
-        static JSV NewConstructor(JSContext* ctx, std::string name, Func func, int argLength = -1) {
-            JSValue jsFunc = JS_NewCFunction2(ctx, func, name.c_str(), argLength, JS_CFUNC_constructor, 0);
-            return JSV(ctx, jsFunc).cset(1);
+        static JSV NewConstructor(JSContext* ctx, std::string name, JSCFunction func, int argLength = -1) {
+            return JSV(ctx, JS_NewCFunction2(ctx, func, name.c_str(), argLength, JS_CFUNC_constructor, 0)).cset(1);
         }
-        template<typename Func>
-        static JSV NewFunction(JSContext* ctx, std::string name, Func func, int argLength = -1) {
-            JSValue jsFunc = JS_NewCFunction(ctx, func, name.c_str(), argLength);
-            return JSV(ctx, jsFunc).cset(1);
+        static JSV NewFunction(JSContext* ctx, std::string name, JSCFunction func, int argLength = -1) {
+            return JSV(ctx, JS_NewCFunction(ctx, func, name.c_str(), argLength)).cset(1);
+        }
+
+        static JSV NewIterator(JSContext* ctx, JSV targetObject, std::string name, JSCClosure next, int magic = -1, void* opaque = nullptr, JSCClosureFinalizerFunc onRelease = nullptr, int argLength = 0, int64_t flags = -1) {
+            JSV iterator = NewObject(ctx);
+            if (!iterator.isValid()) return {};
+
+            SetSymbolName(ctx, iterator, name);
+            AppendMethod(ctx, iterator, "next", next, magic, opaque, onRelease, argLength, flags);
+
+            JSV global = NewGlobalObject(ctx);
+            if (!global.isValid()) return {};
+            JSV symbolIterator = GetProperty(ctx, global, { {"Symbol"}, {"iterator"} });
+            if (!symbolIterator.isValid()) return {};
+
+            JSV iteratorFunc = NewFunction(ctx, "Symbol.iterator", [](JSContext* ctx, JSValueConst thisVal, int argc, JSValueConst* argv) -> JSValue {
+                return JS_DupValue(ctx, thisVal);
+                });
+            if (!iteratorFunc.isValid()) return {};
+
+            SetAttribute(ctx, iterator, symbolIterator, iteratorFunc, flags);
+            SetAttribute(ctx, targetObject, symbolIterator, iterator, flags);
+
+            return iterator;
+        }
+        static JSV NewFunction(JSContext* ctx, std::string name, JSCClosure func, int magic = -1, void* opaque = nullptr, JSCClosureFinalizerFunc onRelease = nullptr, int argLength = 0, int64_t flags = -1) {
+            return JSV(ctx, JS_NewCClosure(ctx, func, name.c_str(), onRelease, argLength, magic, opaque)).cset(1);
         }
         static JSV NewNumber(JSContext* ctx, double num) {
             JSValue jsVal = JS_NewNumber(ctx, num);
@@ -17406,8 +18653,6 @@ namespace cjs {
                 return false;
             }
 
-
-
             const char* name = JS_ToCString(ctx, constructorName);
             if (!name || strcmp(name, expectedTypeName.c_str()) != 0) {
                 if (name) JS_FreeCString(ctx, name);
@@ -17475,7 +18720,7 @@ namespace cjs {
                 JS_FreeValue(ctx, buffer);
                 JS_FreeValue(ctx, byteLengthVal);
                 JS_FreeValue(ctx, byteOffsetVal);
-                return true;
+                return false;
             }
 
             if ((size_t)byteOffset + (size_t)byteLength > bufLen) {
@@ -18309,7 +19554,7 @@ namespace cjs {
             jsmdPtr->threadList_mtx.lock();
             jsmdPtr->threadList.push_back(td);
             jsmdPtr->threadList_mtx.unlock();
-            update(ctx);
+            //update(ctx);
             if (out) *out = td;
             return true;
         }
@@ -18323,35 +19568,52 @@ namespace cjs {
             jsmdPtr->hModuleCJSValueList_mtx.unlock();
             return id;
         }
-        static ULL GetNewFileControllerId(JSContext* ctx) {
+        static int GetNewFileControllerId(JSContext* ctx) {
             JSMData* jsmdPtr = nullptr;
             if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) return 0;
             static ULL counter = 0;
-            return GetNewIdGeneric(ctx, jsmdPtr->fileControllerList, counter);
+            ULL id = GetNewIdGeneric(ctx, jsmdPtr->fileControllerList, counter);
+            if (id > 0 && id <= INT_MAX) {
+                return (int)id;
+            }
+            return 0;
         }
         static ULL GetNewExecuteJsId(JSContext* ctx) {
             JSMData* jsmdPtr = nullptr;
             if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) return 0;
             static ULL counter = 0;
-            return GetNewIdGeneric(ctx, jsmdPtr->executeJsList, counter);
+            ULL id = GetNewIdGeneric(ctx, jsmdPtr->executeJsList, counter);
+            return id;
         }
-        static ULL GetNewFormDataId(JSContext* ctx) {
+        static int GetNewFormDataId(JSContext* ctx) {
             JSMData* jsmdPtr = nullptr;
             if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) return 0;
             static ULL counter = 0;
-            return GetNewIdGeneric(ctx, jsmdPtr->formDataList, counter);
+            ULL id = GetNewIdGeneric(ctx, jsmdPtr->formDataList, counter);
+            if (id > 0 && id <= INT_MAX) {
+                return (int)id;
+            }
+            return 0;
         }
-        static ULL GetNewNetworkHttpId(JSContext* ctx) {
+        static int GetNewNetworkHttpId(JSContext* ctx) {
             JSMData* jsmdPtr = nullptr;
             if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) return 0;
             static ULL counter = 0;
-            return GetNewIdGeneric(ctx, jsmdPtr->networkHttpList, counter);
+            ULL id = GetNewIdGeneric(ctx, jsmdPtr->networkHttpList, counter);
+            if (id > 0 && id <= INT_MAX) {
+                return (int)id;
+            }
+            return 0;
         }
-        static ULL GetNewTimeoutId(JSContext* ctx) {
+        static int GetNewTimeoutId(JSContext* ctx) {
             JSMData* jsmdPtr = nullptr;
             if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) return 0;
             static ULL counter = 0;
-            return GetNewIdGeneric(ctx, jsmdPtr->timeoutList, counter);
+            ULL id = GetNewIdGeneric(ctx, jsmdPtr->timeoutList, counter);
+            if (id > 0 && id <= INT_MAX) {
+                return (int)id;
+            }
+            return 0;
         }
         static ULL GetNewTaskId(JSContext* ctx) {
             JSMData* jsmdPtr = nullptr;
@@ -18365,6 +19627,16 @@ namespace cjs {
             if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) return 0;
             static ULL counter = 0;
             return GetNewIdGeneric(ctx, jsmdPtr->hModuleCJSValueList, counter);
+        }
+        static int GetNewDllId(JSContext* ctx) {
+            JSMData* jsmdPtr = nullptr;
+            if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) return 0;
+            static ULL counter = 0;
+            ULL id = GetNewIdGeneric(ctx, jsmdPtr->hDllList, counter);
+            if (id > 0 && id <= INT_MAX) {
+                return (int)id;
+            }
+            return 0;
         }
         static ULL GetNewArgumentPackageId(JSContext* ctx) {
             JSMData* jsmdPtr = nullptr;
@@ -20494,24 +21766,46 @@ namespace cjs {
         }
 
         template <typename Container>
-        static ULL GetNewIdGeneric(JSContext* ctx, const Container& container, ULL& counter) {
+        static ULL GetNewIdGeneric(JSContext* ctx, const Container& container, ULL& counter)
+        {
+            using KeyT = typename Container::key_type;
             JSMData* jsmdPtr = nullptr;
             if (!GetData(ctx, &jsmdPtr) || jsmdPtr == nullptr) {
                 return 0;
             }
+
+            auto safe_cast = [](ULL v) -> std::optional<KeyT> {
+                if constexpr (std::is_signed_v<KeyT>) {
+                    if (v > static_cast<ULL>(std::numeric_limits<KeyT>::max())) {
+                        return std::nullopt;
+                    }
+                }
+                else {
+                    if (v > std::numeric_limits<KeyT>::max()) {
+                        return std::nullopt;
+                    }
+                }
+                return static_cast<KeyT>(v);
+                };
+
             if (counter < ULLONG_MAX) {
-                ULL candidate = ++counter;
-                if (container.find(candidate) == container.end()) {
-                    return candidate;
+                ULL candidateUll = ++counter;
+                auto k = safe_cast(candidateUll);
+                if (k && container.find(*k) == container.end()) {
+                    return candidateUll;
                 }
             }
-            ULL fallback = 1;
-            while (fallback < ULLONG_MAX) {
-                if (container.find(fallback) == container.end()) {
-                    counter = fallback + 1;
-                    return fallback;
+
+            ULL fallbackUll = 1;
+            for (; fallbackUll < ULLONG_MAX; ++fallbackUll) {
+                auto k = safe_cast(fallbackUll);
+                if (!k) {
+                    continue;
                 }
-                fallback++;
+                if (container.find(*k) == container.end()) {
+                    counter = fallbackUll + 1;
+                    return fallbackUll;
+                }
             }
             return 0;
         }
@@ -20643,7 +21937,11 @@ namespace cjs {
             bool isSuccess = JS_PromiseState(jsContext, result.get(0)) == JS_PROMISE_FULFILLED && !JS_IsException(result.get(0));
             promiseResult = (!isSuccess) ? promiseResult : JavaScriptMethod::GetProperty(jsContext, promiseResult, "value");
 
-            if (isHookOutput) jsif.output = outputTemp;
+            if (isHookOutput) {
+                outputTemp_mtx.lock_shared();
+                jsif.output = outputTemp; 
+                outputTemp_mtx.unlock_shared();
+            }
             if (isHookOutput) ClearOutput();
             if (isHookOutput) isConsoleEnv = tempIsConsoleEnv;
             jsif.result = promiseResult;
@@ -20702,7 +22000,9 @@ namespace cjs {
                 isConsoleEnv = false;
                 ClearOutput();
                 JavaScriptMethod::CallFunction(jsContext, JavaScriptMethod::GetProperty(jsContext, JavaScriptMethod::NewGlobalObject(jsContext), { { "console" },{ "log" } }), JS_UNDEFINED, { { promiseResult } });
+                outputTemp_mtx.lock_shared();
                 jsif.detail = outputTemp;
+                outputTemp_mtx.unlock_shared();
                 ClearOutput();
                 isConsoleEnv = tempIsConsoleEnv;
             }
