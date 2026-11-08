@@ -17970,7 +17970,7 @@ namespace cjs {
         }
         static bool SetPrototype(JSContext* ctx, JSV targetObject, JSV value) {
             if (ctx == nullptr) return false;
-            return (JS_SetPrototype(ctx, targetObject.get(0), value.get(1))) == 1;
+            return (JS_SetPrototype(ctx, targetObject.get(0), value.get(0))) == 1;
         }
 
         static bool RemoveAttribute(JSContext* ctx, JSV targetObject, JSV key) {
