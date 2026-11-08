@@ -2,7 +2,7 @@
 
 #ifndef AY_CJS_CPP
 #define AY_CJS_CPP
-#define AY_CJS_CPP_VW std::wstring(L"4.0.20261107.01")
+#define AY_CJS_CPP_VW std::wstring(L"4.1.20261108.01")
 #define AY_CJS_CPP_VL []() -> std::wstring { \
     std::wstring s(AY_CJS_CPP_VW); \
     s.erase(std::remove(s.begin(), s.end(), L'.'), s.end()); \
@@ -640,6 +640,17 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
         }
         else {
             customExtensionPath = commandArgList[L"extension"];
+        }
+    }
+    if (commandArgList.count(L"library")) {
+        if (commandArgList[L"library"] == L"disabled") {
+            isDisabledLibrary = true;
+        }
+        else if (commandArgList[L"library"] == L"enabled") {
+            isDisabledLibrary = false;
+        }
+        else {
+            customLibraryPath = commandArgList[L"library"];
         }
     }
     configObject = {

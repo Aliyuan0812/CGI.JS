@@ -312,7 +312,7 @@ namespace cjs {
 #if defined(_WIN64)
     std::string platform = "win-x64";
 #elif defined(_WIN32)
-    std::string platform = "win-x32";
+    std::string platform = "win-x86";
 #elif defined(__linux__)
     std::string platform = "linux";
 #elif defined(__APPLE__)
@@ -2594,6 +2594,8 @@ namespace cjs {
     ordered_map<std::wstring, std::wstring> commandArgList = {};
     std::wstring commandStartFilePath = L"";
     std::wstring errorOutput = L"";
+    bool isDisabledLibrary = false;
+    std::wstring customLibraryPath = L"./Library/";
 
     SharedMutex outputTemp_mtx = {};
     GMMT outputTemp = {};
@@ -9128,9 +9130,8 @@ namespace cjs {
                     successCount++;
                 }
 
-                if (isAll || chosedModules.count("library")) {
-
-                    FileController* fc = NewInstance<FileController>(L"./Library/", apppath(0));
+                if (!isDisabledLibrary && (isAll || chosedModules.count("library"))) {
+                    FileController* fc = NewInstance<FileController>(customLibraryPath, apppath(0));
                     if (fc->exists()) {
                         GMMT libraryList = fc->list();
                         for (auto& [name, path] : libraryList) {
@@ -9139,7 +9140,6 @@ namespace cjs {
                         }
                     }
                     delete fc;
-
                 }
 
                 if (isAll || chosedModules.count("extension")) {
