@@ -16727,8 +16727,8 @@ namespace cjs {
             }
             std::vector<JSV> members = {};
             JSV vMembers = JSV(ctx, &argumentValues[0]);
-            if (!ReadJSValueAsArray(ctx, vMembers, members)) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.struct] The first argument must be a Array");
+            if (!ReadJSValueAsArray(ctx, vMembers, members) || members.empty()) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.struct] The first argument must be a valid Array");
                 return JS_EXCEPTION;
             }
             JSV vPack = JS_NewUint64(ctx, 8);
