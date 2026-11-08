@@ -2,7 +2,7 @@
 # CGI.JS-Windows API 参考文档
 > 本文档仅对解释器宿主扩展 API 进行详细说明；其余原生语言接口均遵循 ECMAScript 规范。
 >
-> 解释器版本: v4.1.20261108.01。接口行为会受运行环境影响，实际表现请以本地测试结果为准。
+> 解释器版本: v4.2.20261108.01。接口行为会受运行环境影响，实际表现请以本地测试结果为准。
 >
 > 文档最后更新: 2026 年 11 月 08 日。
 
@@ -60,13 +60,13 @@
 | :- | :- | :- |
 | | `--config=true` | (默认) 启用配置文件。 |
 | | `--config=false` | 禁用配置文件。 |
-| | `--config="${path}"` | 使用指定的配置文件。 |
+| | `--config=${path}` | 使用指定的配置文件。 |
 | | `--extension=true` | (默认) 启用扩展功能。 |
 | | `--extension=false` | 禁用扩展功能。 |
-| | `--extension="${dir}"` | 使用指定的扩展目录。 |
+| | `--extension=${dir}` | 使用指定的扩展目录。 |
 | | `--library=true` | (默认) 启用C扩展功能。 |
 | | `--library=false` | 禁用C扩展功能。 |
-| | `--library="${dir}"` | 使用指定的C扩展目录。 |
+| | `--library=${dir}` | 使用指定的C扩展目录。 |
 | | `--no-welcome` | 不输出欢迎语句。 |
 | | `--no-pause` | 禁用程序自动退出前的暂停功能。 |
 | | `--no-final-output` | 在文件模式下不输出脚本执行的最终数据。 |
@@ -6163,6 +6163,51 @@ c
 
   ---
 
+  # struct 函数
+  创建 **struct** 类型对象。
+
+  ### 语法
+  ```js
+  navigator.dll.struct(members: Array<Type*>[, pack: BigInt]) : TypeStruct
+  ```
+
+  ### 参数
+  `members`
+
+  类型: **Array\<Type\*\>**
+
+  结构体的成员，每一项为任意类型对象。
+
+  ### 返回值
+  类型: **TypeStruct**
+
+  如果函数成功，则返回类型对象。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  - 传入参数的数量大于 **2** 或小于 **1**。
+  - `members` 不是 **Array\<Type\*\>**。
+
+  ### 备注
+  **struct** 会创建一个C结构体对象，其内存结构符合标准。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **struct**。
+  ```js
+  const st = navigator.dll.struct([navigator.dll.int(BigInt(5)), navigator.dll.char(BigInt(65))]);
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.0.20261107.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | navigator |
+  | 可用性 | 全局可用 |
+  | 位置 | navigator.dll.bool |
+
+  ---
+
   ## load 函数
   加载一个动态链接库。
 
@@ -6480,7 +6525,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.assign(ptr: TypeVoidPtr, source: Type*) : void
+  navigator.dll.assign(ptr: TypeVoidPtr, source: Type*[, size: BigInt]) : void
   ```
 
   ### 参数
@@ -6496,6 +6541,12 @@ c
 
   任意类型对象。
 
+  `[size]`
+
+  类型: **BigInt**
+
+  允许写入的最大大小，单位为字节。
+
   ### 返回值
   无
 
@@ -6504,6 +6555,8 @@ c
   - 传入参数的数量不等于 **2**。
   - `ptr` 不是 **TypeVoidPtr**。
   - `ptr` 是空指针。
+  - `source` 不是 **Type\***。
+  - 托管堆内内存校验失败。
 
   此函数通常因以下原因之一而导致程序直接崩溃:
 
@@ -6560,7 +6613,7 @@ c
 
   类型: **BigInt**
 
-  允许字符串读取的最大长度。
+  允许读取的最大大小，单位为字节。
 
   ### 返回值
   无
@@ -6571,6 +6624,7 @@ c
   - `ptr` 不是 **TypeVoidPtr**。
   - `ptr` 是空指针。
   - `output` 不是 **Type\***。
+  - 托管堆内内存校验失败。
 
   此函数通常因以下原因之一而导致程序直接崩溃:
 

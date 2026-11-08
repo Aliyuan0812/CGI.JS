@@ -9116,6 +9116,7 @@ namespace cjs {
                     AppendMethod(ctx, dll, "wcharTPtr", navigator_dll_wcharTPtr);
                     AppendMethod(ctx, dll, "charPtr", navigator_dll_charPtr);
                     AppendMethod(ctx, dll, "bool", navigator_dll_bool);
+                    AppendMethod(ctx, dll, "struct", navigator_dll_struct);
                     AppendMethod(ctx, dll, "sizeof", navigator_dll_sizeof);
                     AppendMethod(ctx, dll, "malloc", navigator_dll_malloc);
                     AppendMethod(ctx, dll, "free", navigator_dll_free);
@@ -16719,6 +16720,67 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(bool)));
             return type.get(1);
         }
+        static JSValue navigator_dll_struct(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount > 2 || argumentCount < 1) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.struct] Only 1 or 2 arguments are supported: (members, pack?)");
+                return JS_EXCEPTION;
+            }
+            std::vector<JSV> members = {};
+            JSV vMembers = JSV(ctx, &argumentValues[0]);
+            if (!ReadJSValueAsArray(ctx, vMembers, members)) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.struct] The first argument must be a Array");
+                return JS_EXCEPTION;
+            }
+            JSV vPack = JS_NewUint64(ctx, 8);
+            if (argumentCount > 2) {
+                JSV vValue = JSV(ctx, &argumentValues[1]);
+                if (!JS_IsBigInt(vValue.get(0))) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.struct] The second argument must be a BigInt");
+                    return JS_EXCEPTION;
+                }
+                vPack = vValue;
+            }
+            ULL pack = 0;
+            if (!ReadJSValueAsUint64(ctx, vPack, pack)) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.struct] The second argument must be a BigInt");
+                return JS_EXCEPTION;
+            }
+
+            std::vector<JSV> structure = {};
+            ULL offset = 0;
+            ULL struct_align = 0;
+            for (JSV member : members) {
+                JSV vm_size = JSV(ctx, navigator_dll_sizeof(ctx, thisVal, 1, member.getPtr())).cset(1);
+                ULL m_size = 0;
+                if (!ReadJSValueAsUint64(ctx, vm_size, m_size)) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.struct] The struct member must be a valid Type");
+                    return JS_EXCEPTION;
+                }
+                ULL m_align = std::min(m_size, pack);
+                if (offset % m_align != 0) {
+                    offset += (m_align - offset % m_align);
+                }
+                JSV m_data = NewObject(ctx);
+                SetAttribute(ctx, m_data, "type", GetProperty(ctx, member, "type"));
+                SetAttribute(ctx, m_data, "size", NewUint64(ctx, m_size));
+                SetAttribute(ctx, m_data, "startAt", NewUint64(ctx, offset));
+                SetAttribute(ctx, m_data, "value", member);
+                offset += m_size;
+                structure.push_back(m_data);
+                struct_align = std::max(struct_align, m_align);
+            }
+            if (offset % struct_align != 0) {
+                offset += (struct_align - offset % struct_align);
+            }
+
+            JSV type = NewObject(ctx);
+            SetSymbolName(ctx, type, "TypeStruct");
+            SetAttribute(ctx, type, "type", "struct");
+            SetAttribute(ctx, type, "value", NewArray(ctx, structure));
+            SetAttribute(ctx, type, "pack", vPack);
+            SetAttribute(ctx, type, "size", NewUint64(ctx, offset));
+            return type.get(1);
+        }
         static JSValue navigator_dll_sizeof(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount != 1) {
                 JS_ThrowTypeError(ctx, "[navigator.dll.sizeof] Only 1 argument is supported: (Type)");
@@ -16831,7 +16893,7 @@ namespace cjs {
                 });
             if (it == jsmdPtr->cjsByteDataList.end()) {
                 jsmdPtr->cjsByteDataList_mtx.unlock_shared();
-                JS_ThrowTypeError(ctx, "[navigator.dll.assign] The first argument must be a valid TypeVoidPtr");
+                JS_ThrowTypeError(ctx, "[navigator.dll.size] The first argument must be a valid TypeVoidPtr");
                 return JS_EXCEPTION;
             }
             size = it->second.size;
@@ -16840,8 +16902,8 @@ namespace cjs {
             return NewUint64(ctx, size).get(1);
         }
         static JSValue navigator_dll_assign(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
-            if (argumentCount != 2) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.assign] Only 2 arguments are supported: (type, source)");
+            if (argumentCount != 2 && argumentCount != 3) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.assign] Only 2 or 3 arguments are supported: (ptr, source, size?)");
                 return JS_EXCEPTION;
             }
             JSV vValue = JSV(ctx, &argumentValues[0]);
@@ -16872,10 +16934,30 @@ namespace cjs {
             else size = it->second.size;
             jsmdPtr->cjsByteDataList_mtx.unlock_shared();
 
+            if (argumentCount >= 3) {
+                JSV vSize = JSV(ctx, &argumentValues[2]);
+                if (!ReadJSValueAsUint64(ctx, vSize, size)) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.assign] The third argument must be a BigInt");
+                    return JS_EXCEPTION;
+                }
+            }
+
             JSV vType = {};
             std::string type = "";
             if (!JS_IsObject(vTyped.get(0)) || !GetSymbolName(ctx, vTyped).starts_with("Type") || !ReadObjectProperty(ctx, vTyped, "type", vType) || !ReadJSValueAsString(ctx, vType, type)) {
                 JS_ThrowTypeError(ctx, "[navigator.dll.assign] The second argument must be a valid Type");
+                return JS_EXCEPTION;
+            }
+
+            JSV vValueSize = {};
+            ULL valueSize = 0;
+            if (!ReadObjectProperty(ctx, vTyped, "size", vValueSize) || !ReadJSValueAsUint64(ctx, vValueSize, valueSize)) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.assign] The second argument must be a valid Type");
+                return JS_EXCEPTION;
+            }
+
+            if (size < valueSize) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.assign] Insufficient buffer for '%s': requires %llu bytes, available %zu bytes", type.c_str(), valueSize, size);
                 return JS_EXCEPTION;
             }
 
@@ -16912,52 +16994,67 @@ namespace cjs {
             }
 
             if (type == "void*") {
-                *((void**)ptr) = (void*)valueBigInt;
+                void* temp = (void*)valueBigInt;
+                std::memcpy((void*)ptr, &temp, sizeof(void*));
             }
             else if (type == "unsigned long long") {
-                *((unsigned long long*)ptr) = valueBigInt;
+                unsigned long long temp = valueBigInt;
+                std::memcpy((void*)ptr, &temp, sizeof(unsigned long long));
             }
             else if (type == "unsigned long") {
-                *((unsigned long*)ptr) = (unsigned long)valueBigInt;
+                unsigned long temp = (unsigned long)valueBigInt;
+                std::memcpy((void*)ptr, &temp, sizeof(unsigned long));
             }
             else if (type == "unsigned int") {
-                *((unsigned int*)ptr) = (unsigned int)valueBigInt;
+                unsigned int temp = (unsigned int)valueBigInt;
+                std::memcpy((void*)ptr, &temp, sizeof(unsigned int));
             }
             else if (type == "long") {
-                *((long*)ptr) = (long)valueBigInt;
+                long temp = (long)valueBigInt;
+                std::memcpy((void*)ptr, &temp, sizeof(long));
             }
             else if (type == "long long") {
-                *((long long*)ptr) = (long long)valueBigInt;
+                long long temp = (long long)valueBigInt;
+                std::memcpy((void*)ptr, &temp, sizeof(long long));
             }
             else if (type == "int") {
-                *((int*)ptr) = (int)valueBigInt;
+                int temp = (int)valueBigInt;
+                std::memcpy((void*)ptr, &temp, sizeof(int));
             }
             else if (type == "float") {
-                *((float*)ptr) = (float)valueFloat;
+                float temp = (float)valueFloat;
+                std::memcpy((void*)ptr, &temp, sizeof(float));
             }
             else if (type == "double") {
-                *((double*)ptr) = valueFloat;
+                double temp = valueFloat;
+                std::memcpy((void*)ptr, &temp, sizeof(double));
             }
             else if (type == "char") {
-                *((char*)ptr) = (char)valueBigInt;
+                char temp = (char)valueBigInt;
+                std::memcpy((void*)ptr, &temp, sizeof(char));
             }
             else if (type == "unsigned char") {
-                *((unsigned char*)ptr) = (unsigned char)valueBigInt;
+                unsigned char temp = (unsigned char)valueBigInt;
+                std::memcpy((void*)ptr, &temp, sizeof(unsigned char));
             }
             else if (type == "short") {
-                *((short*)ptr) = (short)valueBigInt;
+                short temp = (short)valueBigInt;
+                std::memcpy((void*)ptr, &temp, sizeof(short));
             }
             else if (type == "unsigned short") {
-                *((unsigned short*)ptr) = (unsigned short)valueBigInt;
+                unsigned short temp = (unsigned short)valueBigInt;
+                std::memcpy((void*)ptr, &temp, sizeof(unsigned short));
             }
             else if (type == "long double") {
-                *((long double*)ptr) = (long double)valueFloat;
+                long double temp = (long double)valueFloat;
+                std::memcpy((void*)ptr, &temp, sizeof(long double));
             }
             else if (type == "wchar_t") {
-                *((wchar_t*)ptr) = (wchar_t)valueBigInt;
+                wchar_t temp = (wchar_t)valueBigInt;
+                std::memcpy((void*)ptr, &temp, sizeof(wchar_t));
             }
             else if (type == "char*") {
-                char* dest = (char*)ptr;
+                char* dest = (char*)(void*)ptr;
                 if (valueString.size() + 1 > size) {
                     std::memcpy(dest, valueString.data(), (size_t)(size - 1));
                     dest[size - 1] = '\0';
@@ -16968,7 +17065,7 @@ namespace cjs {
             }
             else if (type == "wchar_t*") {
                 std::wstring wstr = stringToWstring(valueString);
-                wchar_t* dest = (wchar_t*)ptr;
+                wchar_t* dest = (wchar_t*)(void*)ptr;
                 const unsigned long long maxElem = size / sizeof(wchar_t);
                 if (wstr.size() + 1 > maxElem) {
                     std::wmemcpy(dest, wstr.data(), (size_t)(maxElem - 1));
@@ -16979,7 +17076,43 @@ namespace cjs {
                 }
             }
             else if (type == "bool") {
-                *((bool*)ptr) = valueBool;
+                bool temp = valueBool;
+                std::memcpy((void*)ptr, &temp, sizeof(bool));
+            }
+            else if (type == "struct") {
+                uint8_t* pointer = (uint8_t*)ptr;
+                JSV vStructure = {};
+                std::vector<JSV> structure = {};
+                if (!ReadObjectProperty(ctx, vTyped, "value", vStructure) || !ReadJSValueAsArray(ctx, vStructure, structure)) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.assign] The second argument must be a valid TypeStruct");
+                    return JS_EXCEPTION;
+                }
+                for (JSV member : structure) {
+                    JSV vValue = {};
+                    JSV vStartAt = {};
+                    ULL startAt = 0;
+                    JSV vSize = {};
+                    ULL size = 0;
+                    if (!JS_IsObject(member.get()) || !ReadObjectProperty(ctx, member, "value", vValue) || !ReadObjectProperty(ctx, member, "startAt", vStartAt) || !ReadJSValueAsUint64(ctx, vStartAt, startAt) || !ReadObjectProperty(ctx, member, "size", vSize) || !ReadJSValueAsUint64(ctx, vSize, size)) {
+                        JS_ThrowTypeError(ctx, "[navigator.dll.assign] The second argument must be a valid TypeStruct");
+                        return JS_EXCEPTION;
+                    }
+                    
+                    JSV voidPtr = JSV(ctx, navigator_dll_voidPtr(ctx, thisVal, 1, NewUint64(ctx, (unsigned long long)(pointer + startAt)).getPtr())).cset(1);
+                    if (JS_IsException(voidPtr.get())) {
+                        JS_ThrowTypeError(ctx, "[navigator.dll.assign] Failed to create void*");
+                        return JS_EXCEPTION;
+                    }
+                    JSValue cargs[3] = {
+                        { voidPtr.get() },
+                        { vValue.get()},
+                        { NewUint64(ctx, size).get() }
+                    };
+                    if (JS_IsException(JSV(ctx, navigator_dll_assign(ctx, thisVal, 3, cargs)).cset(1).get())) {
+                        JS_ThrowTypeError(ctx, "[navigator.dll.assign] Failed to write the struct to memory");
+                        return JS_EXCEPTION;
+                    }
+                }
             }
 
             return JS_UNDEFINED;
@@ -17031,6 +17164,18 @@ namespace cjs {
                 return JS_EXCEPTION;
             }
 
+            JSV vValueSize = {};
+            ULL valueSize = 0;
+            if (!ReadObjectProperty(ctx, vTyped, "size", vValueSize) || !ReadJSValueAsUint64(ctx, vValueSize, valueSize)) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.read] The second argument must be a valid Type");
+                return JS_EXCEPTION;
+            }
+
+            if (size < valueSize) {
+                JS_ThrowTypeError(ctx, "[navigator.dll.read] Oversized buffer for '%s': requires %llu bytes, available %zu bytes", type.c_str(), valueSize, size);
+                return JS_EXCEPTION;
+            }
+
             JSV vVal = {};
             ULL valueBigInt = 0;
             double valueFloat = 0.0;
@@ -17042,52 +17187,82 @@ namespace cjs {
                 return JS_EXCEPTION;
             }
             else if (type == "void*") {
-                valueBigInt = (unsigned long long)(*((void**)ptr));
+                void* tmp;
+                std::memcpy(&tmp, (void*)ptr, sizeof(void*));
+                valueBigInt = (unsigned long long)tmp;
             }
             else if (type == "unsigned long long") {
-                valueBigInt = (*((unsigned long long*)ptr));
+                unsigned long long tmp;
+                std::memcpy(&tmp, (void*)ptr, sizeof(unsigned long long));
+                valueBigInt = tmp;
             }
             else if (type == "unsigned long") {
-                valueBigInt = (unsigned long long)(*((unsigned long*)ptr));
+                unsigned long tmp;
+                std::memcpy(&tmp, (void*)ptr, sizeof(unsigned long));
+                valueBigInt = (unsigned long long)tmp;
             }
             else if (type == "unsigned int") {
-                valueBigInt = (unsigned long long)(*((unsigned int*)ptr));
+                unsigned int tmp;
+                std::memcpy(&tmp, (void*)ptr, sizeof(unsigned int));
+                valueBigInt = (unsigned long long)tmp;
             }
             else if (type == "long") {
-                valueBigInt = (unsigned long long)(*((long*)ptr));
+                long tmp;
+                std::memcpy(&tmp, (void*)ptr, sizeof(long));
+                valueBigInt = (unsigned long long)tmp;
             }
             else if (type == "long long") {
-                valueBigInt = (unsigned long long)(*((long long*)ptr));
+                long long tmp;
+                std::memcpy(&tmp, (void*)ptr, sizeof(long long));
+                valueBigInt = (unsigned long long)tmp;
             }
             else if (type == "int") {
-                valueBigInt = (unsigned long long)(*((int*)ptr));
+                int tmp;
+                std::memcpy(&tmp, (void*)ptr, sizeof(int));
+                valueBigInt = (unsigned long long)tmp;
             }
             else if (type == "float") {
-                valueFloat = (double)(*((float*)ptr));
+                float tmp;
+                std::memcpy(&tmp, (void*)ptr, sizeof(float));
+                valueFloat = (double)tmp;
             }
             else if (type == "double") {
-                valueFloat = (*((double*)ptr));
+                double tmp;
+                std::memcpy(&tmp, (void*)ptr, sizeof(double));
+                valueFloat = tmp;
             }
             else if (type == "char") {
-                valueBigInt = (unsigned long long)(*((char*)ptr));
+                char tmp;
+                std::memcpy(&tmp, (void*)ptr, sizeof(char));
+                valueBigInt = (unsigned long long)tmp;
             }
             else if (type == "unsigned char") {
-                valueBigInt = (unsigned long long)(*((unsigned char*)ptr));
+                unsigned char tmp;
+                std::memcpy(&tmp, (void*)ptr, sizeof(unsigned char));
+                valueBigInt = (unsigned long long)tmp;
             }
             else if (type == "short") {
-                valueBigInt = (unsigned long long)(*((short*)ptr));
+                short tmp;
+                std::memcpy(&tmp, (void*)ptr, sizeof(short));
+                valueBigInt = (unsigned long long)tmp;
             }
             else if (type == "unsigned short") {
-                valueBigInt = (unsigned long long)(*((unsigned short*)ptr));
+                unsigned short tmp;
+                std::memcpy(&tmp, (void*)ptr, sizeof(unsigned short));
+                valueBigInt = (unsigned long long)tmp;
             }
             else if (type == "long double") {
-                valueFloat = (double)(*((long double*)ptr));
+                long double tmp;
+                std::memcpy(&tmp, (void*)ptr, sizeof(long double));
+                valueFloat = (double)tmp;
             }
             else if (type == "wchar_t") {
-                valueBigInt = (unsigned long long)(*((wchar_t*)ptr));
+                wchar_t tmp;
+                std::memcpy(&tmp, (void*)ptr, sizeof(wchar_t));
+                valueBigInt = (unsigned long long)tmp;
             }
             else if (type == "char*") {
-                char* p = (char*)(ptr);
+                char* p = (char*)(void*)ptr;
                 size_t len = strnlen(p, (size_t)size);
                 valueString.assign(p, len);
             }
@@ -17096,7 +17271,7 @@ namespace cjs {
                     valueString.clear();
                 }
                 else {
-                    wchar_t* p = (wchar_t*)(ptr);
+                    wchar_t* p = (wchar_t*)(void*)ptr;
                     size_t maxElem = (size_t)(size / sizeof(wchar_t));
                     size_t len = wcsnlen(p, maxElem);
                     std::wstring wstr(p, len);
@@ -17104,7 +17279,44 @@ namespace cjs {
                 }
             }
             else if (type == "bool") {
-                valueBool = (*((bool*)ptr));
+                bool tmp;
+                std::memcpy(&tmp, (void*)ptr, sizeof(bool));
+                valueBool = tmp;
+            }
+            else if (type == "struct") {
+                uint8_t* pointer = (uint8_t*)ptr;
+                JSV vStructure = {};
+                std::vector<JSV> structure = {};
+                if (!ReadObjectProperty(ctx, vTyped, "value", vStructure) || !ReadJSValueAsArray(ctx, vStructure, structure)) {
+                    JS_ThrowTypeError(ctx, "[navigator.dll.read] The second argument must be a valid TypeStruct");
+                    return JS_EXCEPTION;
+                }
+                for (JSV member : structure) {
+                    JSV vValue = {};
+                    JSV vStartAt = {};
+                    ULL startAt = 0;
+                    JSV vSize = {};
+                    ULL size = 0;
+                    if (!JS_IsObject(member.get()) || !ReadObjectProperty(ctx, member, "value", vValue) || !ReadObjectProperty(ctx, member, "startAt", vStartAt) || !ReadJSValueAsUint64(ctx, vStartAt, startAt) || !ReadObjectProperty(ctx, member, "size", vSize) || !ReadJSValueAsUint64(ctx, vSize, size)) {
+                        JS_ThrowTypeError(ctx, "[navigator.dll.read] The second argument must be a valid TypeStruct");
+                        return JS_EXCEPTION;
+                    }
+
+                    JSV voidPtr = JSV(ctx, navigator_dll_voidPtr(ctx, thisVal, 1, NewUint64(ctx, (unsigned long long)(pointer + startAt)).getPtr())).cset(1);
+                    if (JS_IsException(voidPtr.get())) {
+                        JS_ThrowTypeError(ctx, "[navigator.dll.read] Failed to create void*");
+                        return JS_EXCEPTION;
+                    }
+                    JSValue cargs[3] = {
+                        { voidPtr.get() },
+                        { vValue.get() },
+                        { NewUint64(ctx, size).get() }
+                    };
+                    if (JS_IsException(JSV(ctx, navigator_dll_read(ctx, thisVal, 3, cargs)).cset(1).get())) {
+                        JS_ThrowTypeError(ctx, "[navigator.dll.read] Failed to read the memory of struct member");
+                        return JS_EXCEPTION;
+                    }
+                }
             }
 
             if (type == "void*" || type == "unsigned long long" || type == "unsigned long" || type == "unsigned int" ||

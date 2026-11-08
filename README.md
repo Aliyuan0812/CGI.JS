@@ -33,9 +33,9 @@ CGI.JS(CJS)将 FastCGI 与 QuickJS-NG 结合，提供现代化的 JS 执行环�
 2. 编译生成可执行文件
 3. 直接运行 `.cjs` 脚本或作为 FCGI 后端启动
 
-`bash
+```bash
 cjs.exe script.cjs
-`
+```
 
 ##### **相关文档**
 
@@ -57,6 +57,7 @@ cjs.exe script.cjs
 
 ### **更新日志**
 
+* 发布版本v4.2.20261108.01: 加入 `navigator.dll.struct`，修复报错语句。
 * 发布版本v4.1.20261108.02: 修复 `CJS_SetPrototype` 内存泄露问题。
 * 发布版本v4.1.20261108.01: 加入 `--library` 启动参数，修改win32下的平台为 `win-x86`。
 * 发布版本v4.0.20261107.01: 升级内核至v0.18.0。重磅加入 FFI 层。新增一系列 `filesystem` 模块接口。全量修复宿主接口函数无法脱离上下文使用的问题。修复 `xhr.send` 函数接收 **FormData** 作为参数时失败的问题。修复 **FormData** 相关历史性问题。修复 `window.setTimeout` 的多线程问题。修复在 `script.execute` 返回新上下文后立即释放崩溃问题。修复 `filesystem.open->close` 函数的查表遗漏解锁问题。修改文件执行模式使其在执行期间不锁定脚本文件。修复 `network.http.open` 状态异常问题。修复一系列问题。
