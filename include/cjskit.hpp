@@ -15281,9 +15281,18 @@ namespace cjs {
                 if (JS_IsNumber(v)) {
                     double d = 0.0;
                     if (JS_ToFloat64(ctx, &d, v) == 0) {
-                        std::wstringstream wss;
-                        wss << std::setprecision(17) << d;
-                        CreateOutput(RemoveSpaceAfterNumber(wss.str()), cNumber);
+                        if (std::isnan(d)) {
+                            CreateOutput(L"NaN", cNumber);
+                        }
+                        else if (std::isinf(d)) {
+                            if (d > 0) CreateOutput(L"Infinity", cNumber);
+                            else CreateOutput(L"-Infinity", cNumber);
+                        }
+                        else {
+                            std::wstringstream wss;
+                            wss << std::setprecision(17) << d;
+                            CreateOutput(RemoveSpaceAfterNumber(wss.str()), cNumber);
+                        }
                     }
                     else {
                         CreateOutput(L"[invalid number]", cComment);
@@ -16787,6 +16796,10 @@ namespace cjs {
                     return JS_EXCEPTION;
                 }
                 ULL m_align = std::min(m_size, pack);
+                if (m_align == 0) {
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.struct] The struct member must be a valid Type");
+                    return JS_EXCEPTION;
+                }
                 if (offset % m_align != 0) {
                     offset += (m_align - offset % m_align);
                 }
@@ -16798,6 +16811,10 @@ namespace cjs {
                 offset += m_size;
                 structure.push_back(m_data);
                 struct_align = std::max(struct_align, m_align);
+            }
+            if (struct_align == 0) {
+                JS_ThrowTypeError(ctx, "[navigator.ffi.struct] The struct member must be a valid Type");
+                return JS_EXCEPTION;
             }
             if (offset % struct_align != 0) {
                 offset += (struct_align - offset % struct_align);

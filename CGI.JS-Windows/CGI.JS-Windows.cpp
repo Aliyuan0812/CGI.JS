@@ -12,7 +12,6 @@
 
 
 #include "../include/cjskit.hpp"
-#include <shared_mutex>
 using namespace cjs;
 
 //void debug(std::wstring text = L"命中") {
@@ -32,7 +31,7 @@ bool arg_version = false;
 int Main(const OpaqueData& data) {
     mode = "repl";
 
-    int consoleResult = CreateConsole(L"CGI.JS - " + cplatform + AY_CJS_CPP_VW + L"", arg_native);
+    int consoleResult = CreateConsole(L"Cgi.js - " + cplatform + AY_CJS_CPP_VW + L"", arg_native);
     if (consoleResult == 0) {
         return EXIT_FAILURE;
     }
