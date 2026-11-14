@@ -22174,8 +22174,9 @@ namespace cjs {
                 jsif.result = result;
                 return jsif;
             }
+
             JSV promiseResult = JSV(jsContext, JS_PromiseResult(jsContext, result.get(0))).cset(1);
-            bool isSuccess = JS_PromiseState(jsContext, result.get(0)) == JS_PROMISE_FULFILLED && !JS_IsException(result.get(0));
+            bool isSuccess = JS_PromiseState(jsContext, result.get(0)) != JS_PROMISE_REJECTED && !JS_IsException(result.get(0));
             promiseResult = (!isSuccess || JS_IsUndefined(promiseResult.get())) ? promiseResult : JavaScriptMethod::GetProperty(jsContext, promiseResult, "value");
 
             if (isHookOutput) {
