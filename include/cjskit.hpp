@@ -2314,7 +2314,6 @@ namespace cjs {
     };
     JSONStruct JSON;
 
-
 #undef ERROR
     typedef struct BLOB {
         std::string mimeType = "application/octet-stream";
@@ -9016,6 +9015,8 @@ namespace cjs {
                     AppendMethod(ctx, script, "compile", script_compile);
                     AppendMethod(ctx, script, "run", script_run);
                     AppendMethod(ctx, script, "validate", script_validate);
+                    AppendMethod(ctx, script, "export", script_export);
+                    AppendMethod(ctx, script, "import", script_import);
                     successCount++;
                 }
 
@@ -9095,39 +9096,39 @@ namespace cjs {
                 if (isAll || chosedModules.count("cjs:navigator")) {
                     JSV navigator = NewObject(ctx, global, "navigator");
                     SetSymbolName(ctx, navigator, "Navigator");
-                    JSV dll = NewObject(ctx, navigator, "dll");
-                    AppendMethod(ctx, dll, "load", navigator_dll_load);
-                    AppendMethod(ctx, dll, "void", navigator_dll_void);
-                    AppendMethod(ctx, dll, "voidPtr", navigator_dll_voidPtr);
-                    AppendMethod(ctx, dll, "unsignedLongLong", navigator_dll_unsignedLongLong);
-                    AppendMethod(ctx, dll, "unsignedLong", navigator_dll_unsignedLong);
-                    AppendMethod(ctx, dll, "unsignedInt", navigator_dll_unsignedInt);
-                    AppendMethod(ctx, dll, "long", navigator_dll_long);
-                    AppendMethod(ctx, dll, "longLong", navigator_dll_longLong);
-                    AppendMethod(ctx, dll, "int", navigator_dll_int);
-                    AppendMethod(ctx, dll, "float", navigator_dll_float);
-                    AppendMethod(ctx, dll, "double", navigator_dll_double);
-                    AppendMethod(ctx, dll, "char", navigator_dll_char);
-                    AppendMethod(ctx, dll, "unsignedChar", navigator_dll_unsignedChar);
-                    AppendMethod(ctx, dll, "short", navigator_dll_short);
-                    AppendMethod(ctx, dll, "unsignedShort", navigator_dll_unsignedShort);
-                    AppendMethod(ctx, dll, "longDouble", navigator_dll_longDouble);
-                    AppendMethod(ctx, dll, "wcharT", navigator_dll_wcharT);
-                    AppendMethod(ctx, dll, "wcharTPtr", navigator_dll_wcharTPtr);
-                    AppendMethod(ctx, dll, "charPtr", navigator_dll_charPtr);
-                    AppendMethod(ctx, dll, "bool", navigator_dll_bool);
-                    AppendMethod(ctx, dll, "struct", navigator_dll_struct);
-                    AppendMethod(ctx, dll, "sizeof", navigator_dll_sizeof);
-                    AppendMethod(ctx, dll, "malloc", navigator_dll_malloc);
-                    AppendMethod(ctx, dll, "free", navigator_dll_free);
-                    AppendMethod(ctx, dll, "size", navigator_dll_size);
-                    AppendMethod(ctx, dll, "assign", navigator_dll_assign);
-                    AppendMethod(ctx, dll, "read", navigator_dll_read);
-                    AppendMethod(ctx, dll, "readVoidPtrAsBinary", navigator_dll_readVoidPtrAsBinary);
-                    AppendMethod(ctx, dll, "writeVoidPtrWithBinary", navigator_dll_writeVoidPtrWithBinary);
-                    SetAttribute(ctx, dll, "CONFIG_ABI_WIN64", NewNumber(ctx, 0b00000001));
-                    SetAttribute(ctx, dll, "CONFIG_ABI_STDCALL", NewNumber(ctx, 0b00000010));
-                    SetAttribute(ctx, dll, "CONFIG_ABI_CDECL", NewNumber(ctx, 0b00000100));
+                    JSV ffi = NewObject(ctx, navigator, "ffi");
+                    AppendMethod(ctx, ffi, "load", navigator_ffi_load);
+                    AppendMethod(ctx, ffi, "void", navigator_ffi_void);
+                    AppendMethod(ctx, ffi, "voidPtr", navigator_ffi_voidPtr);
+                    AppendMethod(ctx, ffi, "unsignedLongLong", navigator_ffi_unsignedLongLong);
+                    AppendMethod(ctx, ffi, "unsignedLong", navigator_ffi_unsignedLong);
+                    AppendMethod(ctx, ffi, "unsignedInt", navigator_ffi_unsignedInt);
+                    AppendMethod(ctx, ffi, "long", navigator_ffi_long);
+                    AppendMethod(ctx, ffi, "longLong", navigator_ffi_longLong);
+                    AppendMethod(ctx, ffi, "int", navigator_ffi_int);
+                    AppendMethod(ctx, ffi, "float", navigator_ffi_float);
+                    AppendMethod(ctx, ffi, "double", navigator_ffi_double);
+                    AppendMethod(ctx, ffi, "char", navigator_ffi_char);
+                    AppendMethod(ctx, ffi, "unsignedChar", navigator_ffi_unsignedChar);
+                    AppendMethod(ctx, ffi, "short", navigator_ffi_short);
+                    AppendMethod(ctx, ffi, "unsignedShort", navigator_ffi_unsignedShort);
+                    AppendMethod(ctx, ffi, "longDouble", navigator_ffi_longDouble);
+                    AppendMethod(ctx, ffi, "wcharT", navigator_ffi_wcharT);
+                    AppendMethod(ctx, ffi, "wcharTPtr", navigator_ffi_wcharTPtr);
+                    AppendMethod(ctx, ffi, "charPtr", navigator_ffi_charPtr);
+                    AppendMethod(ctx, ffi, "bool", navigator_ffi_bool);
+                    AppendMethod(ctx, ffi, "struct", navigator_ffi_struct);
+                    AppendMethod(ctx, ffi, "sizeof", navigator_ffi_sizeof);
+                    AppendMethod(ctx, ffi, "malloc", navigator_ffi_malloc);
+                    AppendMethod(ctx, ffi, "free", navigator_ffi_free);
+                    AppendMethod(ctx, ffi, "size", navigator_ffi_size);
+                    AppendMethod(ctx, ffi, "assign", navigator_ffi_assign);
+                    AppendMethod(ctx, ffi, "read", navigator_ffi_read);
+                    AppendMethod(ctx, ffi, "readVoidPtrAsBinary", navigator_ffi_readVoidPtrAsBinary);
+                    AppendMethod(ctx, ffi, "writeVoidPtrWithBinary", navigator_ffi_writeVoidPtrWithBinary);
+                    SetAttribute(ctx, ffi, "CONFIG_ABI_WIN64", NewNumber(ctx, 0b00000001));
+                    SetAttribute(ctx, ffi, "CONFIG_ABI_STDCALL", NewNumber(ctx, 0b00000010));
+                    SetAttribute(ctx, ffi, "CONFIG_ABI_CDECL", NewNumber(ctx, 0b00000100));
                     successCount++;
                 }
 
@@ -11730,6 +11731,35 @@ namespace cjs {
             JSV byteCode = JSV(ctx, &argumentValues[0]);
             bool isValid = JS_VALUE_GET_TAG(byteCode.get(0)) == JS_TAG_FUNCTION_BYTECODE;
             return NewBool(ctx, isValid).get(1);
+        }
+        static JSValue script_export(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 1) {
+                JS_ThrowTypeError(ctx, "[script.export] Only 1 argument are supported: (obj)");
+                return JS_EXCEPTION;
+            }
+            JSV obj = JSV(ctx, &argumentValues[0]);
+            size_t size = 0;
+            uint8_t* byte = JS_WriteObject(ctx, &size, obj.get(), JS_WRITE_OBJ_BYTECODE | JS_WRITE_OBJ_REFERENCE | JS_WRITE_OBJ_STRIP_SOURCE | JS_WRITE_OBJ_STRIP_DEBUG);
+            if (byte == nullptr) {
+                JS_ThrowInternalError(ctx, "[script.export] Failed to export the object");
+                return JS_EXCEPTION;
+            }
+            BYTEBUFFER data(byte, byte + size);
+            js_free(ctx, byte);
+            JSV vData = NewUint8Array(ctx, data);
+            return vData.get(1);
+        }
+        static JSValue script_import(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+            if (argumentCount != 1) {
+                JS_ThrowTypeError(ctx, "[script.import] Only 1 argument are supported: (bin)");
+                return JS_EXCEPTION;
+            }
+            BYTEBUFFER data = {};
+            JSV bin = JSV(ctx, &argumentValues[0]);
+            if (!ReadJSValueAsUint8Array(ctx, bin, data)) {
+                JS_ThrowTypeError(ctx, "[script.import] The first argument must be a Uint8Array");
+            }
+            return JSV(ctx, JS_ReadObject(ctx, data.data(), data.size(), JS_READ_OBJ_BYTECODE | JS_READ_OBJ_REFERENCE)).cset(1).get(1);
         }
 
         static JSValue system_updateConfig(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
@@ -16330,9 +16360,9 @@ namespace cjs {
             return fileControllerObject.get(1);
         }
 
-        static JSValue navigator_dll_void(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_void(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount != 0) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.void] No argument is supported");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.void] No argument is supported");
                 return JS_EXCEPTION;
             }
             JSV type = NewObject(ctx);
@@ -16342,16 +16372,16 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, 0));
             return type.get(1);
         }
-        static JSValue navigator_dll_voidPtr(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_voidPtr(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount > 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.voidPtr] Only 0 or 1 argument is supported: (value?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.voidPtr] Only 0 or 1 argument is supported: (value?)");
                 return JS_EXCEPTION;
             }
             JSV vFinalValue = NewUint64(ctx, 0);
             if (argumentCount > 0) {
                 JSV vValue = JSV(ctx, &argumentValues[0]);
                 if (!JS_IsBigInt(vValue.get(0))) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.voidPtr] The first argument must be a BigInt");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.voidPtr] The first argument must be a BigInt");
                     return JS_EXCEPTION;
                 }
                 vFinalValue = vValue;
@@ -16363,16 +16393,16 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(void*)));
             return type.get(1);
         }
-        static JSValue navigator_dll_unsignedLongLong(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_unsignedLongLong(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount > 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.unsignedLongLong] Only 0 or 1 argument is supported: (value?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.unsignedLongLong] Only 0 or 1 argument is supported: (value?)");
                 return JS_EXCEPTION;
             }
             JSV vFinalValue = NewUint64(ctx, 0);
             if (argumentCount > 0) {
                 JSV vValue = JSV(ctx, &argumentValues[0]);
                 if (!JS_IsBigInt(vValue.get(0))) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.unsignedLongLong] The first argument must be a BigInt");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.unsignedLongLong] The first argument must be a BigInt");
                     return JS_EXCEPTION;
                 }
                 vFinalValue = vValue;
@@ -16384,16 +16414,16 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(unsigned long long)));
             return type.get(1);
         }
-        static JSValue navigator_dll_unsignedLong(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_unsignedLong(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount > 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.unsignedLong] Only 0 or 1 argument is supported: (value?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.unsignedLong] Only 0 or 1 argument is supported: (value?)");
                 return JS_EXCEPTION;
             }
             JSV vFinalValue = NewUint64(ctx, 0);
             if (argumentCount > 0) {
                 JSV vValue = JSV(ctx, &argumentValues[0]);
                 if (!JS_IsBigInt(vValue.get(0))) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.unsignedLong] The first argument must be a BigInt");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.unsignedLong] The first argument must be a BigInt");
                     return JS_EXCEPTION;
                 }
                 vFinalValue = vValue;
@@ -16405,16 +16435,16 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(unsigned long)));
             return type.get(1);
         }
-        static JSValue navigator_dll_unsignedInt(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_unsignedInt(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount > 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.unsignedInt] Only 0 or 1 argument is supported: (value?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.unsignedInt] Only 0 or 1 argument is supported: (value?)");
                 return JS_EXCEPTION;
             }
             JSV vFinalValue = NewUint64(ctx, 0);
             if (argumentCount > 0) {
                 JSV vValue = JSV(ctx, &argumentValues[0]);
                 if (!JS_IsBigInt(vValue.get(0))) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.unsignedInt] The first argument must be a BigInt");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.unsignedInt] The first argument must be a BigInt");
                     return JS_EXCEPTION;
                 }
                 vFinalValue = vValue;
@@ -16426,16 +16456,16 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(unsigned int)));
             return type.get(1);
         }
-        static JSValue navigator_dll_long(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_long(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount > 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.long] Only 0 or 1 argument is supported: (value?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.long] Only 0 or 1 argument is supported: (value?)");
                 return JS_EXCEPTION;
             }
             JSV vFinalValue = NewUint64(ctx, 0);
             if (argumentCount > 0) {
                 JSV vValue = JSV(ctx, &argumentValues[0]);
                 if (!JS_IsBigInt(vValue.get(0))) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.long] The first argument must be a BigInt");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.long] The first argument must be a BigInt");
                     return JS_EXCEPTION;
                 }
                 vFinalValue = vValue;
@@ -16447,16 +16477,16 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(long)));
             return type.get(1);
         }
-        static JSValue navigator_dll_longLong(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_longLong(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount > 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.longLong] Only 0 or 1 argument is supported: (value?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.longLong] Only 0 or 1 argument is supported: (value?)");
                 return JS_EXCEPTION;
             }
             JSV vFinalValue = NewUint64(ctx, 0);
             if (argumentCount > 0) {
                 JSV vValue = JSV(ctx, &argumentValues[0]);
                 if (!JS_IsBigInt(vValue.get(0))) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.longLong] The first argument must be a BigInt");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.longLong] The first argument must be a BigInt");
                     return JS_EXCEPTION;
                 }
                 vFinalValue = vValue;
@@ -16468,16 +16498,16 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(long long)));
             return type.get(1);
         }
-        static JSValue navigator_dll_int(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_int(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount > 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.int] Only 0 or 1 argument is supported: (value?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.int] Only 0 or 1 argument is supported: (value?)");
                 return JS_EXCEPTION;
             }
             JSV vFinalValue = NewUint64(ctx, 0);
             if (argumentCount > 0) {
                 JSV vValue = JSV(ctx, &argumentValues[0]);
                 if (!JS_IsBigInt(vValue.get(0))) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.int] The first argument must be a BigInt");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.int] The first argument must be a BigInt");
                     return JS_EXCEPTION;
                 }
                 vFinalValue = vValue;
@@ -16489,16 +16519,16 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(int)));
             return type.get(1);
         }
-        static JSValue navigator_dll_float(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_float(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount > 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.float] Only 0 or 1 argument is supported: (value?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.float] Only 0 or 1 argument is supported: (value?)");
                 return JS_EXCEPTION;
             }
             JSV vFinalValue = JS_NewNumber(ctx, 0.0);
             if (argumentCount > 0) {
                 JSV vValue = JSV(ctx, &argumentValues[0]);
                 if (!JS_IsNumber(vValue.get(0))) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.float] The first argument must be a Number");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.float] The first argument must be a Number");
                     return JS_EXCEPTION;
                 }
                 vFinalValue = vValue;
@@ -16510,16 +16540,16 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(float)));
             return type.get(1);
         }
-        static JSValue navigator_dll_double(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_double(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount > 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.double] Only 0 or 1 argument is supported: (value?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.double] Only 0 or 1 argument is supported: (value?)");
                 return JS_EXCEPTION;
             }
             JSV vFinalValue = JS_NewNumber(ctx, 0.0);
             if (argumentCount > 0) {
                 JSV vValue = JSV(ctx, &argumentValues[0]);
                 if (!JS_IsNumber(vValue.get(0))) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.double] The first argument must be a Number");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.double] The first argument must be a Number");
                     return JS_EXCEPTION;
                 }
                 vFinalValue = vValue;
@@ -16531,16 +16561,16 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(double)));
             return type.get(1);
         }
-        static JSValue navigator_dll_char(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_char(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount > 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.char] Only 0 or 1 argument is supported: (value?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.char] Only 0 or 1 argument is supported: (value?)");
                 return JS_EXCEPTION;
             }
             JSV vFinalValue = NewUint64(ctx, 0);
             if (argumentCount > 0) {
                 JSV vValue = JSV(ctx, &argumentValues[0]);
                 if (!JS_IsBigInt(vValue.get(0))) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.char] The first argument must be a BigInt");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.char] The first argument must be a BigInt");
                     return JS_EXCEPTION;
                 }
                 vFinalValue = vValue;
@@ -16552,16 +16582,16 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(char)));
             return type.get(1);
         }
-        static JSValue navigator_dll_unsignedChar(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_unsignedChar(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount > 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.unsignedChar] Only 0 or 1 argument is supported: (value?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.unsignedChar] Only 0 or 1 argument is supported: (value?)");
                 return JS_EXCEPTION;
             }
             JSV vFinalValue = NewUint64(ctx, 0);
             if (argumentCount > 0) {
                 JSV vValue = JSV(ctx, &argumentValues[0]);
                 if (!JS_IsBigInt(vValue.get(0))) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.unsignedChar] The first argument must be a BigInt");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.unsignedChar] The first argument must be a BigInt");
                     return JS_EXCEPTION;
                 }
                 vFinalValue = vValue;
@@ -16573,16 +16603,16 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(unsigned char)));
             return type.get(1);
         }
-        static JSValue navigator_dll_short(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_short(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount > 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.short] Only 0 or 1 argument is supported: (value?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.short] Only 0 or 1 argument is supported: (value?)");
                 return JS_EXCEPTION;
             }
             JSV vFinalValue = NewUint64(ctx, 0);
             if (argumentCount > 0) {
                 JSV vValue = JSV(ctx, &argumentValues[0]);
                 if (!JS_IsBigInt(vValue.get(0))) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.short] The first argument must be a BigInt");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.short] The first argument must be a BigInt");
                     return JS_EXCEPTION;
                 }
                 vFinalValue = vValue;
@@ -16594,16 +16624,16 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(short)));
             return type.get(1);
         }
-        static JSValue navigator_dll_unsignedShort(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_unsignedShort(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount > 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.unsignedShort] Only 0 or 1 argument is supported: (value?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.unsignedShort] Only 0 or 1 argument is supported: (value?)");
                 return JS_EXCEPTION;
             }
             JSV vFinalValue = NewUint64(ctx, 0);
             if (argumentCount > 0) {
                 JSV vValue = JSV(ctx, &argumentValues[0]);
                 if (!JS_IsBigInt(vValue.get(0))) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.unsignedShort] The first argument must be a BigInt");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.unsignedShort] The first argument must be a BigInt");
                     return JS_EXCEPTION;
                 }
                 vFinalValue = vValue;
@@ -16615,16 +16645,16 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(unsigned short)));
             return type.get(1);
         }
-        static JSValue navigator_dll_longDouble(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_longDouble(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount > 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.longDouble] Only 0 or 1 argument is supported: (value?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.longDouble] Only 0 or 1 argument is supported: (value?)");
                 return JS_EXCEPTION;
             }
             JSV vFinalValue = JS_NewNumber(ctx, 0.0);
             if (argumentCount > 0) {
                 JSV vValue = JSV(ctx, &argumentValues[0]);
                 if (!JS_IsNumber(vValue.get(0))) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.longDouble] The first argument must be a Number");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.longDouble] The first argument must be a Number");
                     return JS_EXCEPTION;
                 }
                 vFinalValue = vValue;
@@ -16636,16 +16666,16 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(long double)));
             return type.get(1);
         }
-        static JSValue navigator_dll_wcharT(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_wcharT(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount > 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.wcharT] Only 0 or 1 argument is supported: (value?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.wcharT] Only 0 or 1 argument is supported: (value?)");
                 return JS_EXCEPTION;
             }
             JSV vFinalValue = NewUint64(ctx, 0);
             if (argumentCount > 0) {
                 JSV vValue = JSV(ctx, &argumentValues[0]);
                 if (!JS_IsBigInt(vValue.get(0))) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.wcharT] The first argument must be a BigInt");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.wcharT] The first argument must be a BigInt");
                     return JS_EXCEPTION;
                 }
                 vFinalValue = vValue;
@@ -16657,16 +16687,16 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(wchar_t)));
             return type.get(1);
         }
-        static JSValue navigator_dll_wcharTPtr(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_wcharTPtr(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount > 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.wcharTPtr] Only 0 or 1 argument is supported: (value?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.wcharTPtr] Only 0 or 1 argument is supported: (value?)");
                 return JS_EXCEPTION;
             }
             JSV vFinalValue = JS_NewString(ctx, "");
             if (argumentCount > 0) {
                 JSV vValue = JSV(ctx, &argumentValues[0]);
                 if (!JS_IsString(vValue.get(0))) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.wcharTPtr] The first argument must be a string");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.wcharTPtr] The first argument must be a string");
                     return JS_EXCEPTION;
                 }
                 vFinalValue = vValue;
@@ -16678,16 +16708,16 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(wchar_t*)));
             return type.get(1);
         }
-        static JSValue navigator_dll_charPtr(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_charPtr(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount > 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.charPtr] Only 0 or 1 argument is supported: (value?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.charPtr] Only 0 or 1 argument is supported: (value?)");
                 return JS_EXCEPTION;
             }
             JSV vFinalValue = JS_NewString(ctx, "");
             if (argumentCount > 0) {
                 JSV vValue = JSV(ctx, &argumentValues[0]);
                 if (!JS_IsString(vValue.get(0))) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.charPtr] The first argument must be a string");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.charPtr] The first argument must be a string");
                     return JS_EXCEPTION;
                 }
                 vFinalValue = vValue;
@@ -16699,16 +16729,16 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(char*)));
             return type.get(1);
         }
-        static JSValue navigator_dll_bool(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_bool(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount > 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.bool] Only 0 or 1 argument is supported: (value?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.bool] Only 0 or 1 argument is supported: (value?)");
                 return JS_EXCEPTION;
             }
             JSV vFinalValue = JS_NewBool(ctx, false);
             if (argumentCount > 0) {
                 JSV vValue = JSV(ctx, &argumentValues[0]);
                 if (!JS_IsBool(vValue.get(0))) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.bool] The first argument must be a Boolean");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.bool] The first argument must be a Boolean");
                     return JS_EXCEPTION;
                 }
                 vFinalValue = vValue;
@@ -16720,29 +16750,29 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(bool)));
             return type.get(1);
         }
-        static JSValue navigator_dll_struct(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_struct(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount > 2 || argumentCount < 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.struct] Only 1 or 2 arguments are supported: (members, pack?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.struct] Only 1 or 2 arguments are supported: (members, pack?)");
                 return JS_EXCEPTION;
             }
             std::vector<JSV> members = {};
             JSV vMembers = JSV(ctx, &argumentValues[0]);
             if (!ReadJSValueAsArray(ctx, vMembers, members) || members.empty()) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.struct] The first argument must be a valid Array");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.struct] The first argument must be a valid Array");
                 return JS_EXCEPTION;
             }
             JSV vPack = JS_NewUint64(ctx, 8);
             if (argumentCount > 2) {
                 JSV vValue = JSV(ctx, &argumentValues[1]);
                 if (!JS_IsBigInt(vValue.get(0))) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.struct] The second argument must be a BigInt");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.struct] The second argument must be a BigInt");
                     return JS_EXCEPTION;
                 }
                 vPack = vValue;
             }
             ULL pack = 0;
             if (!ReadJSValueAsUint64(ctx, vPack, pack)) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.struct] The second argument must be a BigInt");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.struct] The second argument must be a BigInt");
                 return JS_EXCEPTION;
             }
 
@@ -16750,10 +16780,10 @@ namespace cjs {
             ULL offset = 0;
             ULL struct_align = 0;
             for (JSV member : members) {
-                JSV vm_size = JSV(ctx, navigator_dll_sizeof(ctx, thisVal, 1, member.getPtr())).cset(1);
+                JSV vm_size = JSV(ctx, navigator_ffi_sizeof(ctx, thisVal, 1, member.getPtr())).cset(1);
                 ULL m_size = 0;
                 if (!ReadJSValueAsUint64(ctx, vm_size, m_size)) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.struct] The struct member must be a valid Type");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.struct] The struct member must be a valid Type");
                     return JS_EXCEPTION;
                 }
                 ULL m_align = std::min(m_size, pack);
@@ -16781,9 +16811,9 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, offset));
             return type.get(1);
         }
-        static JSValue navigator_dll_sizeof(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_sizeof(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount != 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.sizeof] Only 1 argument is supported: (Type)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.sizeof] Only 1 argument is supported: (Type)");
                 return JS_EXCEPTION;
             }
             JSV vValue = JSV(ctx, &argumentValues[0]);
@@ -16791,22 +16821,22 @@ namespace cjs {
             JSV vSize = {};
             ULL size = 0;
             if (!JS_IsObject(vValue.get(0)) || !GetSymbolName(ctx, vValue).starts_with("Type") || !ReadObjectProperty(ctx, vValue, "size", vSize) || !ReadJSValueAsUint64(ctx, vSize,size)) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.sizeof] The first argument must be a valid Type");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.sizeof] The first argument must be a valid Type");
                 return JS_EXCEPTION;
             }
 
             return NewUint64(ctx, size).get(1);
         }
-        static JSValue navigator_dll_malloc(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_malloc(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount != 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.malloc] Only 1 argument is supported: (size)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.malloc] Only 1 argument is supported: (size)");
                 return JS_EXCEPTION;
             }
             JSV vValue = JSV(ctx, &argumentValues[0]);
 
             CJSSize size = 0;
             if (!JS_IsBigInt(vValue.get(0)) || !ReadJSValueAsUint64(ctx, vValue, size)) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.malloc] The first argument must be a BigInt");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.malloc] The first argument must be a BigInt");
                 return JS_EXCEPTION;
             }
 
@@ -16818,7 +16848,7 @@ namespace cjs {
 
             void* ptr = malloc((size_t)size);
             if (!ptr) {
-                JS_ThrowInternalError(ctx, "[navigator.dll.malloc] Failed to malloc");
+                JS_ThrowInternalError(ctx, "[navigator.ffi.malloc] Failed to malloc");
                 return JS_EXCEPTION;
             }
 
@@ -16835,9 +16865,9 @@ namespace cjs {
             SetAttribute(ctx, type, "size", NewUint64(ctx, sizeof(void*)));
             return type.get(1);
         }
-        static JSValue navigator_dll_free(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_free(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount != 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.free] Only 1 argument is supported: (ptr)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.free] Only 1 argument is supported: (ptr)");
                 return JS_EXCEPTION;
             }
             JSV vValue = JSV(ctx, &argumentValues[0]);
@@ -16846,7 +16876,7 @@ namespace cjs {
             JSV vPtr = {};
             ULL ptr = 0;
             if (!JS_IsObject(vValue.get(0)) || !(GetSymbolName(ctx, vValue).starts_with("Type") && GetSymbolName(ctx, vValue).ends_with("Ptr")) || !ReadObjectProperty(ctx, vValue, "value", vPtr) || !ReadJSValueAsUint64(ctx, vPtr, ptr)) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.free] The first argument must be a valid TypeVoidPtr");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.free] The first argument must be a valid TypeVoidPtr");
                 return JS_EXCEPTION;
             }
 
@@ -16866,9 +16896,9 @@ namespace cjs {
 
             return JS_UNDEFINED;
         }
-        static JSValue navigator_dll_size(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_size(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount != 1) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.size] Only 1 argument is supported: (TypeVoidPtr)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.size] Only 1 argument is supported: (TypeVoidPtr)");
                 return JS_EXCEPTION;
             }
             JSV vValue = JSV(ctx, &argumentValues[0]);
@@ -16877,7 +16907,7 @@ namespace cjs {
             JSV vPtr = {};
             ULL ptr = 0;
             if (!JS_IsObject(vValue.get(0)) || !(GetSymbolName(ctx, vValue).starts_with("Type") && GetSymbolName(ctx, vValue).ends_with("Ptr")) || !ReadObjectProperty(ctx, vValue, "value", vPtr) || !ReadJSValueAsUint64(ctx, vPtr, ptr)) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.size] The first argument must be a valid TypeVoidPtr");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.size] The first argument must be a valid TypeVoidPtr");
                 return JS_EXCEPTION;
             }
 
@@ -16893,7 +16923,7 @@ namespace cjs {
                 });
             if (it == jsmdPtr->cjsByteDataList.end()) {
                 jsmdPtr->cjsByteDataList_mtx.unlock_shared();
-                JS_ThrowTypeError(ctx, "[navigator.dll.size] The first argument must be a valid TypeVoidPtr");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.size] The first argument must be a valid TypeVoidPtr");
                 return JS_EXCEPTION;
             }
             size = it->second.size;
@@ -16901,9 +16931,9 @@ namespace cjs {
 
             return NewUint64(ctx, size).get(1);
         }
-        static JSValue navigator_dll_assign(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_assign(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount != 2 && argumentCount != 3) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.assign] Only 2 or 3 arguments are supported: (ptr, source, size?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.assign] Only 2 or 3 arguments are supported: (ptr, source, size?)");
                 return JS_EXCEPTION;
             }
             JSV vValue = JSV(ctx, &argumentValues[0]);
@@ -16914,7 +16944,7 @@ namespace cjs {
             ULL ptr = 0;
 
             if (!JS_IsObject(vValue.get(0)) || !(GetSymbolName(ctx, vValue).starts_with("Type") && GetSymbolName(ctx, vValue).ends_with("Ptr")) || !ReadObjectProperty(ctx, vValue, "value", vPtr) || !ReadJSValueAsUint64(ctx, vPtr, ptr)) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.assign] The first argument must be a valid TypeVoidPtr");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.assign] The first argument must be a valid TypeVoidPtr");
                 return JS_EXCEPTION;
             }
 
@@ -16937,7 +16967,7 @@ namespace cjs {
             if (argumentCount >= 3) {
                 JSV vSize = JSV(ctx, &argumentValues[2]);
                 if (!ReadJSValueAsUint64(ctx, vSize, size)) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.assign] The third argument must be a BigInt");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.assign] The third argument must be a BigInt");
                     return JS_EXCEPTION;
                 }
             }
@@ -16945,19 +16975,19 @@ namespace cjs {
             JSV vType = {};
             std::string type = "";
             if (!JS_IsObject(vTyped.get(0)) || !GetSymbolName(ctx, vTyped).starts_with("Type") || !ReadObjectProperty(ctx, vTyped, "type", vType) || !ReadJSValueAsString(ctx, vType, type)) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.assign] The second argument must be a valid Type");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.assign] The second argument must be a valid Type");
                 return JS_EXCEPTION;
             }
 
             JSV vValueSize = {};
             ULL valueSize = 0;
             if (!ReadObjectProperty(ctx, vTyped, "size", vValueSize) || !ReadJSValueAsUint64(ctx, vValueSize, valueSize)) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.assign] The second argument must be a valid Type");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.assign] The second argument must be a valid Type");
                 return JS_EXCEPTION;
             }
 
             if (size < valueSize) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.assign] Insufficient buffer for '%s': requires %llu bytes, available %zu bytes", type.c_str(), valueSize, size);
+                JS_ThrowTypeError(ctx, "[navigator.ffi.assign] Insufficient buffer for '%s': requires %llu bytes, available %zu bytes", type.c_str(), valueSize, size);
                 return JS_EXCEPTION;
             }
 
@@ -16970,25 +17000,25 @@ namespace cjs {
                 type == "long" || type == "long long" || type == "int" || type == "short" || type == "unsigned short" ||
                 type == "char" || type == "unsigned char" || type == "wchar_t") {
                 if (!ReadObjectProperty(ctx, vTyped, "value", vVal) || !ReadJSValueAsUint64(ctx, vVal, valueBigInt)) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.assign] The second argument must be a valid Type");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.assign] The second argument must be a valid Type");
                     return JS_EXCEPTION;
                 }
             }
             else if (type == "float" || type == "double" || type == "long double") {
                 if (!ReadObjectProperty(ctx, vTyped, "value", vVal) || !ReadJSValueAsDouble(ctx, vVal, valueFloat)) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.assign] The second argument must be a valid Type");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.assign] The second argument must be a valid Type");
                     return JS_EXCEPTION;
                 }
             }
             else if (type == "char*" || type == "wchar_t*") {
                 if (!ReadObjectProperty(ctx, vTyped, "value", vVal) || !ReadJSValueAsString(ctx, vVal, valueString)) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.assign] The second argument must be a valid Type");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.assign] The second argument must be a valid Type");
                     return JS_EXCEPTION;
                 }
             }
             else if (type == "bool") {
                 if (!ReadObjectProperty(ctx, vTyped, "value", vVal) || !ReadJSValueAsBool(ctx, vVal, valueBool)) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.assign] The second argument must be a valid Type");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.assign] The second argument must be a valid Type");
                     return JS_EXCEPTION;
                 }
             }
@@ -17084,7 +17114,7 @@ namespace cjs {
                 JSV vStructure = {};
                 std::vector<JSV> structure = {};
                 if (!ReadObjectProperty(ctx, vTyped, "value", vStructure) || !ReadJSValueAsArray(ctx, vStructure, structure)) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.assign] The second argument must be a valid TypeStruct");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.assign] The second argument must be a valid TypeStruct");
                     return JS_EXCEPTION;
                 }
                 for (JSV member : structure) {
@@ -17094,13 +17124,13 @@ namespace cjs {
                     JSV vSize = {};
                     ULL size = 0;
                     if (!JS_IsObject(member.get()) || !ReadObjectProperty(ctx, member, "value", vValue) || !ReadObjectProperty(ctx, member, "startAt", vStartAt) || !ReadJSValueAsUint64(ctx, vStartAt, startAt) || !ReadObjectProperty(ctx, member, "size", vSize) || !ReadJSValueAsUint64(ctx, vSize, size)) {
-                        JS_ThrowTypeError(ctx, "[navigator.dll.assign] The second argument must be a valid TypeStruct");
+                        JS_ThrowTypeError(ctx, "[navigator.ffi.assign] The second argument must be a valid TypeStruct");
                         return JS_EXCEPTION;
                     }
                     
-                    JSV voidPtr = JSV(ctx, navigator_dll_voidPtr(ctx, thisVal, 1, NewUint64(ctx, (unsigned long long)(pointer + startAt)).getPtr())).cset(1);
+                    JSV voidPtr = JSV(ctx, navigator_ffi_voidPtr(ctx, thisVal, 1, NewUint64(ctx, (unsigned long long)(pointer + startAt)).getPtr())).cset(1);
                     if (JS_IsException(voidPtr.get())) {
-                        JS_ThrowTypeError(ctx, "[navigator.dll.assign] Failed to create void*");
+                        JS_ThrowTypeError(ctx, "[navigator.ffi.assign] Failed to create void*");
                         return JS_EXCEPTION;
                     }
                     JSValue cargs[3] = {
@@ -17108,8 +17138,8 @@ namespace cjs {
                         { vValue.get()},
                         { NewUint64(ctx, size).get() }
                     };
-                    if (JS_IsException(JSV(ctx, navigator_dll_assign(ctx, thisVal, 3, cargs)).cset(1).get())) {
-                        JS_ThrowTypeError(ctx, "[navigator.dll.assign] Failed to write the struct to memory");
+                    if (JS_IsException(JSV(ctx, navigator_ffi_assign(ctx, thisVal, 3, cargs)).cset(1).get())) {
+                        JS_ThrowTypeError(ctx, "[navigator.ffi.assign] Failed to write the struct to memory");
                         return JS_EXCEPTION;
                     }
                 }
@@ -17117,9 +17147,9 @@ namespace cjs {
 
             return JS_UNDEFINED;
         }
-        static JSValue navigator_dll_read(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_read(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount != 2 && argumentCount != 3) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.read] Only 2 or 3 arguments are supported: (ptr, output, size?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.read] Only 2 or 3 arguments are supported: (ptr, output, size?)");
                 return JS_EXCEPTION;
             }
             JSV vValue = JSV(ctx, &argumentValues[0]);
@@ -17129,7 +17159,7 @@ namespace cjs {
             JSV vPtr = {};
             ULL ptr = 0;
             if (!JS_IsObject(vValue.get(0)) || !(GetSymbolName(ctx, vValue).starts_with("Type") && GetSymbolName(ctx, vValue).ends_with("Ptr")) || !ReadObjectProperty(ctx, vValue, "value", vPtr) || !ReadJSValueAsUint64(ctx, vPtr, ptr)) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.read] The first argument must be a valid TypeVoidPtr");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.read] The first argument must be a valid TypeVoidPtr");
                 return JS_EXCEPTION;
             }
 
@@ -17152,7 +17182,7 @@ namespace cjs {
             if (argumentCount >= 3) {
                 JSV vSize = JSV(ctx, &argumentValues[2]);
                 if (!ReadJSValueAsUint64(ctx, vSize, size)) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.read] The third argument must be a BigInt");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.read] The third argument must be a BigInt");
                     return JS_EXCEPTION;
                 }
             }
@@ -17160,19 +17190,19 @@ namespace cjs {
             JSV vType = {};
             std::string type = "";
             if (!JS_IsObject(vTyped.get(0)) || !GetSymbolName(ctx, vTyped).starts_with("Type") || !ReadObjectProperty(ctx, vTyped, "type", vType) || !ReadJSValueAsString(ctx, vType, type)) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.read] The second argument must be a valid Type");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.read] The second argument must be a valid Type");
                 return JS_EXCEPTION;
             }
 
             JSV vValueSize = {};
             ULL valueSize = 0;
             if (!ReadObjectProperty(ctx, vTyped, "size", vValueSize) || !ReadJSValueAsUint64(ctx, vValueSize, valueSize)) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.read] The second argument must be a valid Type");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.read] The second argument must be a valid Type");
                 return JS_EXCEPTION;
             }
 
             if (size < valueSize) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.read] Oversized buffer for '%s': requires %llu bytes, available %zu bytes", type.c_str(), valueSize, size);
+                JS_ThrowTypeError(ctx, "[navigator.ffi.read] Oversized buffer for '%s': requires %llu bytes, available %zu bytes", type.c_str(), valueSize, size);
                 return JS_EXCEPTION;
             }
 
@@ -17183,7 +17213,7 @@ namespace cjs {
             bool valueBool = false;
 
             if (ptr == 0) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.read] Cannot read the value of 'nullptr'");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.read] Cannot read the value of 'nullptr'");
                 return JS_EXCEPTION;
             }
             else if (type == "void*") {
@@ -17288,7 +17318,7 @@ namespace cjs {
                 JSV vStructure = {};
                 std::vector<JSV> structure = {};
                 if (!ReadObjectProperty(ctx, vTyped, "value", vStructure) || !ReadJSValueAsArray(ctx, vStructure, structure)) {
-                    JS_ThrowTypeError(ctx, "[navigator.dll.read] The second argument must be a valid TypeStruct");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.read] The second argument must be a valid TypeStruct");
                     return JS_EXCEPTION;
                 }
                 for (JSV member : structure) {
@@ -17298,13 +17328,13 @@ namespace cjs {
                     JSV vSize = {};
                     ULL size = 0;
                     if (!JS_IsObject(member.get()) || !ReadObjectProperty(ctx, member, "value", vValue) || !ReadObjectProperty(ctx, member, "startAt", vStartAt) || !ReadJSValueAsUint64(ctx, vStartAt, startAt) || !ReadObjectProperty(ctx, member, "size", vSize) || !ReadJSValueAsUint64(ctx, vSize, size)) {
-                        JS_ThrowTypeError(ctx, "[navigator.dll.read] The second argument must be a valid TypeStruct");
+                        JS_ThrowTypeError(ctx, "[navigator.ffi.read] The second argument must be a valid TypeStruct");
                         return JS_EXCEPTION;
                     }
 
-                    JSV voidPtr = JSV(ctx, navigator_dll_voidPtr(ctx, thisVal, 1, NewUint64(ctx, (unsigned long long)(pointer + startAt)).getPtr())).cset(1);
+                    JSV voidPtr = JSV(ctx, navigator_ffi_voidPtr(ctx, thisVal, 1, NewUint64(ctx, (unsigned long long)(pointer + startAt)).getPtr())).cset(1);
                     if (JS_IsException(voidPtr.get())) {
-                        JS_ThrowTypeError(ctx, "[navigator.dll.read] Failed to create void*");
+                        JS_ThrowTypeError(ctx, "[navigator.ffi.read] Failed to create void*");
                         return JS_EXCEPTION;
                     }
                     JSValue cargs[3] = {
@@ -17312,8 +17342,8 @@ namespace cjs {
                         { vValue.get() },
                         { NewUint64(ctx, size).get() }
                     };
-                    if (JS_IsException(JSV(ctx, navigator_dll_read(ctx, thisVal, 3, cargs)).cset(1).get())) {
-                        JS_ThrowTypeError(ctx, "[navigator.dll.read] Failed to read the memory of struct member");
+                    if (JS_IsException(JSV(ctx, navigator_ffi_read(ctx, thisVal, 3, cargs)).cset(1).get())) {
+                        JS_ThrowTypeError(ctx, "[navigator.ffi.read] Failed to read the memory of struct member");
                         return JS_EXCEPTION;
                     }
                 }
@@ -17335,15 +17365,15 @@ namespace cjs {
             }
             return JS_UNDEFINED;
         }
-        static JSValue navigator_dll_load(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_load(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount < 1 || argumentCount > 2) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.load] Only 1 or 2 arguments are supported: (libFileName, config?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.load] Only 1 or 2 arguments are supported: (libFileName, config?)");
                 return JS_EXCEPTION;
             }
             JSV vLibFileName = JSV(&argumentValues[0]);
             std::string libFileName = "";
             if (!JS_IsString(vLibFileName.get(0)) || !ReadJSValueAsString(ctx, vLibFileName, libFileName)) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.load] The first argument must be a string");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.load] The first argument must be a string");
                 return JS_EXCEPTION;
             }
 
@@ -17364,7 +17394,7 @@ namespace cjs {
 
             HMODULE lib = LoadLibraryW(stringToWstring(libFileName).c_str());
             if (!lib) {
-                JS_ThrowInternalError(ctx, "[navigator.dll.load] Failed to load the library");
+                JS_ThrowInternalError(ctx, "[navigator.ffi.load] Failed to load the library");
                 return JS_EXCEPTION;
             }
 
@@ -17398,7 +17428,7 @@ namespace cjs {
             for (const DllExportData& dt : data) {
                 AppendMethod(ctx, exports, dt.name, [](JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues, int magic, void* opaque) -> JSValue {
                     if (argumentCount < 1) {
-                        JS_ThrowTypeError(ctx, "[navigator.dll.load->exports.call] Only 1 or more arguments are supported: (out_returnValue, ...args?)");
+                        JS_ThrowTypeError(ctx, "[navigator.ffi.load->exports.call] Only 1 or more arguments are supported: (out_returnValue, ...args?)");
                         return JS_EXCEPTION;
                     }
                     ffi_cif cif;
@@ -17415,7 +17445,7 @@ namespace cjs {
                         std::string type = "";
                         ffi_type* t = nullptr;
                         if (!JS_IsObject(vTyped.get(0)) || !GetSymbolName(ctx, vTyped).starts_with("Type") || !ReadObjectProperty(ctx, vTyped, "type", vType) || !ReadJSValueAsString(ctx, vType, type)) {
-                            JS_ThrowTypeError(ctx, "[navigator.dll.load->exports.call] The argument must be a valid Type");
+                            JS_ThrowTypeError(ctx, "[navigator.ffi.load->exports.call] The argument must be a valid Type");
                             return JS_EXCEPTION;
                         }
                         if (type == "void") {
@@ -17429,7 +17459,7 @@ namespace cjs {
                             JSV vValue = {};
                             std::string value = "";
                             if (!ReadObjectProperty(ctx, vTyped, "value", vValue) || !ReadJSValueAsString(ctx, vValue, value)) {
-                                JS_ThrowTypeError(ctx, "[navigator.dll.load->exports.call] The argument must be a valid Type");
+                                JS_ThrowTypeError(ctx, "[navigator.ffi.load->exports.call] The argument must be a valid Type");
                                 return JS_EXCEPTION;
                             }
                             types[i - 1].value_string = value;
@@ -17480,7 +17510,7 @@ namespace cjs {
                             t = &ffi_type_uint8;
                         }
                         else {
-                            JS_ThrowTypeError(ctx, "[navigator.dll.load->exports.call] The argument must be a valid Type");
+                            JS_ThrowTypeError(ctx, "[navigator.ffi.load->exports.call] The argument must be a valid Type");
                             return JS_EXCEPTION;
                         }
                         if (i == 0) {
@@ -17509,7 +17539,7 @@ namespace cjs {
                     }
                     ffi_status status = ffi_prep_cif(&cif, abi, (unsigned int)args.size(), returnType, args.data());
                     if (status != FFI_OK) {
-                        JS_ThrowTypeError(ctx, "[navigator.dll.load->exports.call] The arguments are not valid");
+                        JS_ThrowTypeError(ctx, "[navigator.ffi.load->exports.call] The arguments are not valid");
                         return JS_EXCEPTION;
                     }
                     void* return_buf = nullptr;
@@ -17529,7 +17559,7 @@ namespace cjs {
                                 JSValue cargs[1] = {
                                     { jsv.get(0) },
                                 };
-                                JSV(ctx, navigator_dll_free(ctx, thisVal, 1, cargs)).cset(1);
+                                JSV(ctx, navigator_ffi_free(ctx, thisVal, 1, cargs)).cset(1);
                             }
                         }
                         for (void* ptr : argv) {
@@ -17540,14 +17570,14 @@ namespace cjs {
                         void* param_buf = _malloca(args[i]->size);
                         if (param_buf == nullptr) {
                             freeValue();
-                            JS_ThrowInternalError(ctx, "[navigator.dll.load->exports.call] Failed to alloc the memory of argument value");
+                            JS_ThrowInternalError(ctx, "[navigator.ffi.load->exports.call] Failed to alloc the memory of argument value");
                             return JS_EXCEPTION;
                         }
                         if (types[i].type == "char*" || types[i].type == "wchar_t*") {
-                            JSV charPtr = (types[i].type == "char*") ? JSV(ctx, navigator_dll_malloc(ctx, thisVal, 1, NewUint64(ctx, types[i].value_string.size() + 1).getPtr())).cset(1) : JSV(ctx, navigator_dll_malloc(ctx, thisVal, 1, NewUint64(ctx, (stringToWstring(types[i].value_string).size() + 1) * sizeof(wchar_t)).getPtr())).cset(1);
+                            JSV charPtr = (types[i].type == "char*") ? JSV(ctx, navigator_ffi_malloc(ctx, thisVal, 1, NewUint64(ctx, types[i].value_string.size() + 1).getPtr())).cset(1) : JSV(ctx, navigator_ffi_malloc(ctx, thisVal, 1, NewUint64(ctx, (stringToWstring(types[i].value_string).size() + 1) * sizeof(wchar_t)).getPtr())).cset(1);
                             if (JS_IsException(charPtr.get(0))) {
                                 freeValue();
-                                JS_ThrowInternalError(ctx, "[navigator.dll.load->exports.call] Failed to alloc the memory of argument value");
+                                JS_ThrowInternalError(ctx, "[navigator.ffi.load->exports.call] Failed to alloc the memory of argument value");
                                 return JS_EXCEPTION;
                             }
                             needReleaseList.push_back(charPtr);
@@ -17555,34 +17585,34 @@ namespace cjs {
                                 { charPtr.get(0) },
                                 { argumentValues[i + 1] }
                             };
-                            ret = JSV(ctx, navigator_dll_assign(ctx, thisVal, 2, cargs1)).cset(1);
+                            ret = JSV(ctx, navigator_ffi_assign(ctx, thisVal, 2, cargs1)).cset(1);
                             if (JS_IsException(ret.get(0))) {
                                 freeValue();
-                                JS_ThrowInternalError(ctx, "[navigator.dll.load->exports.call] Failed to read argument value");
+                                JS_ThrowInternalError(ctx, "[navigator.ffi.load->exports.call] Failed to read argument value");
                                 return JS_EXCEPTION;
                             }
-                            JSV voidPtr = JSV(ctx, navigator_dll_voidPtr(ctx, thisVal, 1, NewUint64(ctx, (unsigned long long)param_buf).getPtr())).cset(1);
+                            JSV voidPtr = JSV(ctx, navigator_ffi_voidPtr(ctx, thisVal, 1, NewUint64(ctx, (unsigned long long)param_buf).getPtr())).cset(1);
                             JSValue cargs2[2] = {
                                 { voidPtr.get(0) },
                                 { charPtr.get(0) }
                             };
-                            ret = JSV(ctx, navigator_dll_assign(ctx, thisVal, 2, cargs2)).cset(1);
+                            ret = JSV(ctx, navigator_ffi_assign(ctx, thisVal, 2, cargs2)).cset(1);
                             if (JS_IsException(ret.get(0))) {
                                 freeValue();
-                                JS_ThrowInternalError(ctx, "[navigator.dll.load->exports.call] Failed to read argument value");
+                                JS_ThrowInternalError(ctx, "[navigator.ffi.load->exports.call] Failed to read argument value");
                                 return JS_EXCEPTION;
                             }
                         }
                         else {
-                            JSV voidPtr = JSV(ctx, navigator_dll_voidPtr(ctx, thisVal, 1, NewUint64(ctx, (unsigned long long)param_buf).getPtr())).cset(1);
+                            JSV voidPtr = JSV(ctx, navigator_ffi_voidPtr(ctx, thisVal, 1, NewUint64(ctx, (unsigned long long)param_buf).getPtr())).cset(1);
                             JSValue cargs[2] = {
                                 { voidPtr.get(0) },
                                 { argumentValues[i + 1] }
                             };
-                            ret = JSV(ctx, navigator_dll_assign(ctx, thisVal, 2, cargs)).cset(1);
+                            ret = JSV(ctx, navigator_ffi_assign(ctx, thisVal, 2, cargs)).cset(1);
                             if (JS_IsException(ret.get(0))) {
                                 freeValue();
-                                JS_ThrowInternalError(ctx, "[navigator.dll.load->exports.call] Failed to read argument value");
+                                JS_ThrowInternalError(ctx, "[navigator.ffi.load->exports.call] Failed to read argument value");
                                 return JS_EXCEPTION;
                             }
                         }
@@ -17592,15 +17622,15 @@ namespace cjs {
                     void (*pfn)(void) = reinterpret_cast<void (*)(void)>(opaque);
                     ffi_call(&cif, pfn, return_buf, argv.data());
                     if (returnType != &ffi_type_void) {
-                        JSV returnVoidPtr = JSV(ctx, navigator_dll_voidPtr(ctx, thisVal, 1, NewUint64(ctx, (unsigned long long)return_buf).getPtr())).cset(1);
+                        JSV returnVoidPtr = JSV(ctx, navigator_ffi_voidPtr(ctx, thisVal, 1, NewUint64(ctx, (unsigned long long)return_buf).getPtr())).cset(1);
                         JSValue cargs[2] = {
                             { returnVoidPtr.get(0) },
                             { argumentValues[0] }
                         };
-                        ret = JSV(ctx, navigator_dll_read(ctx, thisVal, 2, cargs)).cset(1);
+                        ret = JSV(ctx, navigator_ffi_read(ctx, thisVal, 2, cargs)).cset(1);
                         if (JS_IsException(ret.get(0))) {
                             freeValue();
-                            JS_ThrowInternalError(ctx, "[navigator.dll.load->exports.call] Failed to assign return value");
+                            JS_ThrowInternalError(ctx, "[navigator.ffi.load->exports.call] Failed to assign return value");
                             return JS_EXCEPTION;
                         }
                     }
@@ -17637,9 +17667,9 @@ namespace cjs {
 
             return returnValue.get(1);
         }
-        static JSValue navigator_dll_readVoidPtrAsBinary(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_readVoidPtrAsBinary(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount != 1 && argumentCount != 2) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.readVoidPtrAsBinary] Only 1 or 2 arguments are supported: (ptr, size?)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.readVoidPtrAsBinary] Only 1 or 2 arguments are supported: (ptr, size?)");
                 return JS_EXCEPTION;
             }
             JSV vValue = JSV(ctx, &argumentValues[0]);
@@ -17648,7 +17678,7 @@ namespace cjs {
             JSV vPtr = {};
             ULL ptr = 0;
             if (!JS_IsObject(vValue.get(0)) || !(GetSymbolName(ctx, vValue).starts_with("Type") && GetSymbolName(ctx, vValue).ends_with("Ptr")) || !ReadObjectProperty(ctx, vValue, "value", vPtr) || !ReadJSValueAsUint64(ctx, vPtr, ptr)) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.readVoidPtrAsBinary] The first argument must be a valid TypeVoidPtr");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.readVoidPtrAsBinary] The first argument must be a valid TypeVoidPtr");
                 return JS_EXCEPTION;
             }
 
@@ -17665,13 +17695,13 @@ namespace cjs {
             if (it == jsmdPtr->cjsByteDataList.end()) {
                 if (argumentCount < 2) {
                     jsmdPtr->cjsByteDataList_mtx.unlock_shared();
-                    JS_ThrowTypeError(ctx, "[navigator.dll.readVoidPtrAsBinary] The second argument must be a BigInt when the pointer isn't created by the engine");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.readVoidPtrAsBinary] The second argument must be a BigInt when the pointer isn't created by the engine");
                     return JS_EXCEPTION;
                 }
                 JSV vSize = JSV(ctx, &argumentValues[1]);
                 if (!ReadJSValueAsUint64(ctx, vSize, size)) {
                     jsmdPtr->cjsByteDataList_mtx.unlock_shared();
-                    JS_ThrowTypeError(ctx, "[navigator.dll.readVoidPtrAsBinary] The second argument must be a valid BigInt");
+                    JS_ThrowTypeError(ctx, "[navigator.ffi.readVoidPtrAsBinary] The second argument must be a valid BigInt");
                     return JS_EXCEPTION;
                 }
             }
@@ -17681,9 +17711,9 @@ namespace cjs {
             BYTEBUFFER buffer(reinterpret_cast<const std::uint8_t*>(ptr), reinterpret_cast<const std::uint8_t*>(ptr) + size);
             return NewUint8Array(ctx, buffer).get(1);
         }
-        static JSValue navigator_dll_writeVoidPtrWithBinary(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
+        static JSValue navigator_ffi_writeVoidPtrWithBinary(JSContext* ctx, JSValueConst thisVal, int argumentCount, JSValueConst* argumentValues) {
             if (argumentCount != 2 && argumentCount != 3) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.writeVoidPtrWithBinary] Only 2 argument are supported: (ptr, data)");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.writeVoidPtrWithBinary] Only 2 argument are supported: (ptr, data)");
                 return JS_EXCEPTION;
             }
             JSV vValue = JSV(ctx, &argumentValues[0]);
@@ -17692,12 +17722,12 @@ namespace cjs {
             JSV vPtr = {};
             ULL ptr = 0;
             if (!JS_IsObject(vValue.get(0)) || !(GetSymbolName(ctx, vValue).starts_with("Type") && GetSymbolName(ctx, vValue).ends_with("Ptr")) || !ReadObjectProperty(ctx, vValue, "value", vPtr) || !ReadJSValueAsUint64(ctx, vPtr, ptr)) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.writeVoidPtrWithBinary] The first argument must be a valid TypeVoidPtr");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.writeVoidPtrWithBinary] The first argument must be a valid TypeVoidPtr");
                 return JS_EXCEPTION;
             }
             BYTEBUFFER data = {};
             if (!ReadJSValueAsUint8Array(ctx, vData, data)) {
-                JS_ThrowTypeError(ctx, "[navigator.dll.writeVoidPtrWithBinary] The second argument must be a Uint8Array");
+                JS_ThrowTypeError(ctx, "[navigator.ffi.writeVoidPtrWithBinary] The second argument must be a Uint8Array");
                 return JS_EXCEPTION;
             }
             JSMData* jsmdPtr = nullptr;
@@ -22132,7 +22162,7 @@ namespace cjs {
 
             return true;
         }
-        bool isInit() {
+        bool isInit() const {
             return isInit1;
         }
         JSINFO getInfoInternal(JSV result, const bool& tempIsConsoleEnv, const bool& isHookOutput = false, const OpaqueData& data = {}) {
@@ -22144,10 +22174,9 @@ namespace cjs {
                 jsif.result = result;
                 return jsif;
             }
-
             JSV promiseResult = JSV(jsContext, JS_PromiseResult(jsContext, result.get(0))).cset(1);
             bool isSuccess = JS_PromiseState(jsContext, result.get(0)) == JS_PROMISE_FULFILLED && !JS_IsException(result.get(0));
-            promiseResult = (!isSuccess) ? promiseResult : JavaScriptMethod::GetProperty(jsContext, promiseResult, "value");
+            promiseResult = (!isSuccess || JS_IsUndefined(promiseResult.get())) ? promiseResult : JavaScriptMethod::GetProperty(jsContext, promiseResult, "value");
 
             if (isHookOutput) {
                 outputTemp_mtx.lock_shared();
@@ -22233,6 +22262,42 @@ namespace cjs {
             JavaScriptMethod::SetAttribute(jsContext, system, "path", wstringToString(FormatPath(fileName)));
 
             int evalFlag = JS_EVAL_TYPE_GLOBAL | JS_EVAL_FLAG_ASYNC;
+            //int evalFlag = JS_EVAL_TYPE_MODULE;
+            if (data.isValid) {
+                JavaScriptMethod::SetAttribute(jsContext, system, "cmdLine", wstringToString(data.cmdLine));
+                JavaScriptMethod::SetAttribute(jsContext, system, "cmdLineArgs", JavaScriptMethod::NewObject(jsContext, data.cmdLineArgs));
+                JavaScriptMethod::SetAttribute(jsContext, system, "scriptPath", wstringToString(data.scriptPath));
+
+                evalFlag |= data.arg_eval_flag;
+            }
+
+            JSValue ret = JS_Eval(
+                jsContext,
+                code.c_str(),
+                code.length(),
+                wstringToString(fileName).c_str(),
+                evalFlag
+            );
+            JavaScriptMethod::RunTask(jsContext);
+
+            JSV result = JSV(jsContext, ret).cset(1);
+            if (evalFlag & JS_EVAL_TYPE_MODULE) {
+            }
+
+            return getInfoInternal(result, tempIsConsoleEnv, isHookOutput, data);
+        }
+        JSINFO evala(const std::wstring& InCode, const std::wstring& fileName = L"typein", const bool& isHookOutput = false, const OpaqueData& data = {}) {
+            if (!isInit()) return {};
+            std::string code = wstringToString(InCode);
+
+            bool tempIsConsoleEnv = isConsoleEnv;
+            if (isHookOutput) isConsoleEnv = false;
+            if (isHookOutput) ClearOutput();
+
+            JSV system = JavaScriptMethod::GetProperty(jsContext, JavaScriptMethod::NewGlobalObject(jsContext), "system");
+            JavaScriptMethod::SetAttribute(jsContext, system, "path", wstringToString(FormatPath(fileName)));
+
+            int evalFlag = JS_EVAL_TYPE_GLOBAL | JS_EVAL_FLAG_ASYNC;
             if (data.isValid) {
                 JavaScriptMethod::SetAttribute(jsContext, system, "cmdLine", wstringToString(data.cmdLine));
                 JavaScriptMethod::SetAttribute(jsContext, system, "cmdLineArgs", JavaScriptMethod::NewObject(jsContext, data.cmdLineArgs));
@@ -22267,7 +22332,7 @@ namespace cjs {
             return jsRuntime;
         }
 
-        bool alive() {
+        bool alive() const {
             return isAlive;
         }
 

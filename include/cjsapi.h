@@ -28,7 +28,7 @@ extern "C" {
      * @note 必须实现定义。
      */
     CAENTRY CJS_Main(CJSMAININFO info);
-    CAEXP CJSVERSION cjs_versionExchanger() {
+    CAEXP CJSVERSION cjs_versionExchanger(void) {
         return ver;
     }
     CAENTRY cjs_main(CJSContext info) {
@@ -41,7 +41,7 @@ extern "C" {
         CJS_Main(cjsinfo);
         return CARSUCCESS;
     }
-    CAENTRY cjs_exit() {
+    CAENTRY cjs_exit(void) {
         ctx = NULL;
         if (onExit) onExit();
         return CARSUCCESS;
@@ -63,7 +63,7 @@ extern "C" {
      * @brief 获取全局对象。
      * @return JS值(Object)。
      */
-    CJSValue CJS_GetGlobalObject() {
+    CJSValue CJS_GetGlobalObject(void) {
         static type_cjs_GeneralNewCJSValue f = (type_cjs_GeneralNewCJSValue)GetProcAddress(hm, "cjs_GetGlobalObject");
         CJS_Assert(f && "方法不可用");
         return f(ctx);
@@ -72,7 +72,7 @@ extern "C" {
      * @brief 获取JS的null值。
      * @return JS值(null)。
      */
-    CJSValue CJS_NewNull() {
+    CJSValue CJS_NewNull(void) {
         static type_cjs_GeneralNewCJSValue f = (type_cjs_GeneralNewCJSValue)GetProcAddress(hm, "cjs_NewNull");
         CJS_Assert(f && "方法不可用");
         return f(ctx);
@@ -81,7 +81,7 @@ extern "C" {
      * @brief 获取JS的undefined值。
      * @return JS值(undefined)。
      */
-    CJSValue CJS_NewUndefined() {
+    CJSValue CJS_NewUndefined(void) {
         static type_cjs_GeneralNewCJSValue f = (type_cjs_GeneralNewCJSValue)GetProcAddress(hm, "cjs_NewUndefined");
         CJS_Assert(f && "方法不可用");
         return f(ctx);
@@ -90,7 +90,7 @@ extern "C" {
      * @brief 获取未初始化的JS值。
      * @return JS值(未初始化)。
      */
-    CJSValue CJS_NewUninititalized() {
+    CJSValue CJS_NewUninititalized(void) {
         static type_cjs_GeneralNewCJSValue f = (type_cjs_GeneralNewCJSValue)GetProcAddress(hm, "cjs_NewUninititalized");
         CJS_Assert(f && "方法不可用");
         return f(ctx);
@@ -119,7 +119,7 @@ extern "C" {
      * @brief 创建新的JS对象。
      * @return JS值(Object)。
      */
-    CJSValue CJS_NewObject() {
+    CJSValue CJS_NewObject(void) {
         static type_cjs_NewObject f = (type_cjs_NewObject)GetProcAddress(hm, "cjs_NewObject");
         CJS_Assert(f && "方法不可用");
         return f(ctx);
@@ -128,7 +128,7 @@ extern "C" {
      * @brief 创建新的JS数组。
      * @return JS值(Array)。
      */
-    CJSValue CJS_NewArray() {
+    CJSValue CJS_NewArray(void) {
         static type_cjs_NewArray f = (type_cjs_NewArray)GetProcAddress(hm, "cjs_NewArray");
         CJS_Assert(f && "方法不可用");
         return f(ctx);
@@ -240,7 +240,7 @@ extern "C" {
      * @brief 创建新的JS通用错误对象。
      * @return JS值(Error)。
      */
-    CJSValue CJS_NewError() {
+    CJSValue CJS_NewError(void) {
         static type_cjs_NewError f = (type_cjs_NewError)GetProcAddress(hm, "cjs_NewError");
         CJS_Assert(f && "方法不可用");
         return f(ctx);
@@ -409,7 +409,7 @@ extern "C" {
      * @brief 创建新的JS Promise对象。
      * @return JS Promise对象(包含promise/reject/resolve)。
      */
-    CJSPromise CJS_NewPromise() {
+    CJSPromise CJS_NewPromise(void) {
         static type_cjs_NewPromise f = (type_cjs_NewPromise)GetProcAddress(hm, "cjs_NewPromise");
         CJS_Assert(f && "方法不可用");
         return f(ctx);
@@ -438,7 +438,7 @@ extern "C" {
      * @brief 提前释放所有JS值(非必要，未释放的值将在程序结束后自动释放)。
      * @return 操作状态。
      */
-    CJSBool CJS_FreeAllCJSValue() {
+    CJSBool CJS_FreeAllCJSValue(void) {
         static type_cjs_FreeAllCJSValue f = (type_cjs_FreeAllCJSValue)GetProcAddress(hm, "cjs_FreeAllCJSValue");
         CJS_Assert(f && "方法不可用");
         return f(ctx);
@@ -556,7 +556,7 @@ extern "C" {
      * @brief 获取原始QuickJs-NG的JSContext指针(生命周期仅在当前实例有效期内有效)。
      * @return JSContext指针。
      */
-    JSContext* CJS_GetOriginContext() {
+    JSContext* CJS_GetOriginContext(void) {
         static type_cjs_GetOriginContext f = (type_cjs_GetOriginContext)GetProcAddress(hm, "cjs_GetOriginContext");
         CJS_Assert(f && "方法不可用");
         return f(ctx);
@@ -1320,7 +1320,7 @@ extern "C" {
      * @brief 立即阻塞执行任务队列而非等到同步代码执行完成后执行。
      * @return 执行前的任务数。
      */
-    CJSSize CJS_RunTask() {
+    CJSSize CJS_RunTask(void) {
         static type_cjs_RunTask f = (type_cjs_RunTask)GetProcAddress(hm, "cjs_RunTask");
         CJS_Assert(f && "方法不可用");
         return f(ctx);

@@ -57,6 +57,7 @@ cjs.exe script.cjs
 
 ### **更新日志**
 
+* 发布版本v4.3.20261114.01: 加入 `script.export` `script.import`，修改 `navigator.dll` 为 `navigator.ffi`，升级了第三方依赖。
 * 发布版本v4.2.20261108.01: 加入 `navigator.dll.struct`。健壮 FFI层 托管堆内存校验。修复报错语句。
 * 发布版本v4.1.20261108.02: 修复 `CJS_SetPrototype` 内存泄露问题。
 * 发布版本v4.1.20261108.01: 加入 `--library` 启动参数，修改win32下的平台为 `win-x86`。

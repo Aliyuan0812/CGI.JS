@@ -2,9 +2,9 @@
 # CGI.JS-Windows API 参考文档
 > 本文档仅对解释器宿主扩展 API 进行详细说明；其余原生语言接口均遵循 ECMAScript 规范。
 >
-> 解释器版本: v4.2.20261108.01。接口行为会受运行环境影响，实际表现请以本地测试结果为准。
+> 解释器版本: v4.3.20261114.01。接口行为会受运行环境影响，实际表现请以本地测试结果为准。
 >
-> 文档最后更新: 2026 年 11 月 08 日。
+> 文档最后更新: 2026 年 11 月 14 日。
 
 ## 前置说明
 
@@ -25,20 +25,20 @@
 > 本解释器具有三种运行模式: 
 >
 > 1.文件(file)模式，通常是通过命令行启动解释器并且执行指定.cjs文件，例如
-> ```bash
+> ```batch
 > cjs.exe script.cjs 
 > ```
 > 2.交互式(repl)模式，通常是直接运行解释器并且在shell中执行代码，例如
-> ```bash
+> ```batch
 > cjs.exe
 > ```
 >
 > 也可以通过
-> ```bash
+> ```batch
 > cmd.exe /c cjs.exe
 > ```
 >在独立控制台中执行，这能够提供更稳定的交互式模式运行环境，或者
-> ```bash
+> ```batch
 > conhost.exe cmd.exe /c cjs.exe
 > ```
 >强制指定在旧版控制台中运行，这通常是为了兼容旧环境而出此决策。
@@ -2695,7 +2695,9 @@
   ### 例
   以下示例代码演示如何使用 **run**。
   ```js
-c
+  const bytecode = script.compile('1+1');
+  const val = script.run(bytecode);
+  console.log(val); //输出 2
   ```
 
   ### 要求
@@ -2752,6 +2754,100 @@ c
   | 所属模块 | script |
   | 可用性 | 全局可用 |
   | 位置 | script.validate |
+
+  ---
+
+  ## export 函数
+  将任意JS数据导出为可转移的二进制。
+
+  ### 语法
+  ```js
+  script.export(obj: any) : Uint8Array
+  ```
+
+  ### 参数
+  `obj`
+
+  类型: **any**
+
+  任意JS数据。
+
+  ### 返回值
+  类型: **Uint8Array**
+
+  可转移的二进制数据。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  &bull; 未传入任何参数。
+
+  &bull; 转换失败。
+
+  ### 备注
+  **export** 函数会将任意JS数据导出为二进制数据，其有效性一般与解释器版本有关。有关如何导入二进制数据，请参阅 [script.import](#import-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **export**。
+  ```js
+  const bin = script.export(2);
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.3.20261114.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | script |
+  | 可用性 | 全局可用 |
+  | 位置 | script.export |
+
+  ---
+
+  ## import 函数
+  将可转移的二进制导入为JS数据。
+
+  ### 语法
+  ```js
+  script.import(bin: Uint8Array) : any
+  ```
+
+  ### 参数
+  `bin`
+
+  类型: **Uint8Array**
+
+  由 `script.export` 获得的二进制数据。
+
+  ### 返回值
+  类型: **any**
+
+  二进制对应的JS数据。
+
+  此函数通常因以下原因之一而抛出异常:
+
+  &bull; 未传入任何参数。
+
+  &bull; 导入失败。
+
+  ### 备注
+  **import** 函数会导入二进制数据为JS数据，其有效性一般与解释器版本有关。有关如何获取导出二进制，请参阅 [script.export](#export-函数)。
+
+  ### 例
+  以下示例代码演示如何使用 **import**。
+  ```js
+  const bin = script.export(2);
+  const val = script.import(bin);
+  console.log(val); //输出 2
+  ```
+
+  ### 要求
+  | 要求 | 参数值 |
+  | :- | :- |
+  | 最低支持的运行时 | Cgi.js v4.3.20261114.01 |
+  | 目标平台 | Windows |
+  | 所属模块 | script |
+  | 可用性 | 全局可用 |
+  | 位置 | script.import |
 
   ---
 
@@ -5291,14 +5387,14 @@ c
 
   ---
 
-# navigator.dll 对象
+# navigator.ffi 对象
 
   ## void 函数
   创建 **void** 类型对象。
 
   ### 语法
   ```js
-  navigator.dll.void() : TypeVoid
+  navigator.ffi.void() : TypeVoid
   ```
 
   ### 参数
@@ -5314,12 +5410,12 @@ c
   &bull; 传入参数的数量不等于 **0**。
 
   ### 备注
-  **void** 会创建一个无类型类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **void** 会创建一个无类型类型对象。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **void**。
   ```js
-  const vd = navigator.dll.void();
+  const vd = navigator.ffi.void();
   ```
 
   ### 要求
@@ -5329,7 +5425,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.voidPtr |
+  | 位置 | navigator.ffi.voidPtr |
 
 ---
 
@@ -5338,7 +5434,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.voidPtr([value: BigInt]) : TypeVoidPtr
+  navigator.ffi.voidPtr([value: BigInt]) : TypeVoidPtr
   ```
 
   ### 参数
@@ -5360,13 +5456,13 @@ c
   &bull; `value` 不是 **BigInt**。
 
   ### 备注
-  **voidPtr** 会创建一个无类型指针类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **voidPtr** 会创建一个无类型指针类型对象。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **voidPtr**。
   ```js
-  const nullptr = navigator.dll.voidPtr(BigInt(0));
-  const nullptrDefault = navigator.dll.voidPtr();
+  const nullptr = navigator.ffi.voidPtr(BigInt(0));
+  const nullptrDefault = navigator.ffi.voidPtr();
   ```
 
   ### 要求
@@ -5376,7 +5472,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.voidPtr |
+  | 位置 | navigator.ffi.voidPtr |
 
   ---
 
@@ -5385,7 +5481,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.unsignedLongLong([value: BigInt]) : TypeUnsignedLongLong
+  navigator.ffi.unsignedLongLong([value: BigInt]) : TypeUnsignedLongLong
   ```
 
   ### 参数
@@ -5407,13 +5503,13 @@ c
   &bull; `value` 不是 **BigInt**。
 
   ### 备注
-  **unsignedLongLong** 会创建一个无符号长长整型类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **unsignedLongLong** 会创建一个无符号长长整型类型对象。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **unsignedLongLong**。
   ```js
-  const ull0 = navigator.dll.unsignedLongLong(BigInt(0));
-  const ull0Default = navigator.dll.unsignedLongLong();
+  const ull0 = navigator.ffi.unsignedLongLong(BigInt(0));
+  const ull0Default = navigator.ffi.unsignedLongLong();
   ```
 
   ### 要求
@@ -5423,7 +5519,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.unsignedLongLong |
+  | 位置 | navigator.ffi.unsignedLongLong |
 
   ---
 
@@ -5432,7 +5528,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.unsignedLong([value: BigInt]) : TypeUnsignedLong
+  navigator.ffi.unsignedLong([value: BigInt]) : TypeUnsignedLong
   ```
 
   ### 参数
@@ -5453,13 +5549,13 @@ c
   - `value` 不是 **BigInt**。
 
   ### 备注
-  **unsignedLong** 会创建一个无符号长整型类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **unsignedLong** 会创建一个无符号长整型类型对象。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **unsignedLong**。
   ```js
-  const ul0 = navigator.dll.unsignedLong(BigInt(0));
-  const ul0Default = navigator.dll.unsignedLong();
+  const ul0 = navigator.ffi.unsignedLong(BigInt(0));
+  const ul0Default = navigator.ffi.unsignedLong();
   ```
 
   ### 要求
@@ -5469,7 +5565,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.unsignedLong |
+  | 位置 | navigator.ffi.unsignedLong |
 
   ---
 
@@ -5478,7 +5574,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.unsignedInt([value: BigInt]) : TypeUnsignedInt
+  navigator.ffi.unsignedInt([value: BigInt]) : TypeUnsignedInt
   ```
 
   ### 参数
@@ -5499,13 +5595,13 @@ c
   - `value` 不是 **BigInt**。
 
   ### 备注
-  **unsignedInt** 会创建一个无符号整型类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **unsignedInt** 会创建一个无符号整型类型对象。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **unsignedInt**。
   ```js
-  const ui0 = navigator.dll.unsignedInt(BigInt(0));
-  const ui0Default = navigator.dll.unsignedInt();
+  const ui0 = navigator.ffi.unsignedInt(BigInt(0));
+  const ui0Default = navigator.ffi.unsignedInt();
   ```
 
   ### 要求
@@ -5515,7 +5611,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.unsignedInt |
+  | 位置 | navigator.ffi.unsignedInt |
 
   ---
 
@@ -5524,7 +5620,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.long([value: BigInt]) : TypeLong
+  navigator.ffi.long([value: BigInt]) : TypeLong
   ```
 
   ### 参数
@@ -5545,13 +5641,13 @@ c
   - `value` 不是 **BigInt**。
 
   ### 备注
-  **long** 会创建一个长整型类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **long** 会创建一个长整型类型对象。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **long**。
   ```js
-  const l0 = navigator.dll.long(BigInt(0));
-  const l0Default = navigator.dll.long();
+  const l0 = navigator.ffi.long(BigInt(0));
+  const l0Default = navigator.ffi.long();
   ```
 
   ### 要求
@@ -5561,7 +5657,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.long |
+  | 位置 | navigator.ffi.long |
 
   ---
 
@@ -5570,7 +5666,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.longLong([value: BigInt]) : TypeLongLong
+  navigator.ffi.longLong([value: BigInt]) : TypeLongLong
   ```
 
   ### 参数
@@ -5591,13 +5687,13 @@ c
   - `value` 不是 **BigInt**。
 
   ### 备注
-  **longLong** 会创建一个长长整型类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **longLong** 会创建一个长长整型类型对象。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **longLong**。
   ```js
-  const l0 = navigator.dll.longLong(BigInt(0));
-  const l0Default = navigator.dll.longLong();
+  const l0 = navigator.ffi.longLong(BigInt(0));
+  const l0Default = navigator.ffi.longLong();
   ```
 
   ### 要求
@@ -5607,7 +5703,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.longLong |
+  | 位置 | navigator.ffi.longLong |
 
   ---
 
@@ -5616,7 +5712,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.int([value: BigInt]) : TypeInt
+  navigator.ffi.int([value: BigInt]) : TypeInt
   ```
 
   ### 参数
@@ -5637,13 +5733,13 @@ c
   - `value` 不是 **BigInt**。
 
   ### 备注
-  **int** 会创建一个整型类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **int** 会创建一个整型类型对象。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **int**。
   ```js
-  const i0 = navigator.dll.int(BigInt(0));
-  const i0Default = navigator.dll.int();
+  const i0 = navigator.ffi.int(BigInt(0));
+  const i0Default = navigator.ffi.int();
   ```
 
   ### 要求
@@ -5653,7 +5749,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.int |
+  | 位置 | navigator.ffi.int |
 
   ---
 
@@ -5662,7 +5758,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.float([value: number]) : TypeFloat
+  navigator.ffi.float([value: number]) : TypeFloat
   ```
 
   ### 参数
@@ -5683,13 +5779,13 @@ c
   - `value` 不是 **number**。
 
   ### 备注
-  **float** 会创建一个单精度浮点类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **float** 会创建一个单精度浮点类型对象。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **float**。
   ```js
-  const f0 = navigator.dll.float(0.0);
-  const f0Default = navigator.dll.float();
+  const f0 = navigator.ffi.float(0.0);
+  const f0Default = navigator.ffi.float();
   ```
 
   ### 要求
@@ -5699,7 +5795,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.float |
+  | 位置 | navigator.ffi.float |
 
   ---
 
@@ -5708,7 +5804,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.double([value: number]) : TypeDouble
+  navigator.ffi.double([value: number]) : TypeDouble
   ```
 
   ### 参数
@@ -5729,13 +5825,13 @@ c
   - `value` 不是 **number**。
 
   ### 备注
-  **double** 会创建一个双精度浮点类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **double** 会创建一个双精度浮点类型对象。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **double**。
   ```js
-  const d0 = navigator.dll.double(0.0);
-  const d0Default = navigator.dll.double();
+  const d0 = navigator.ffi.double(0.0);
+  const d0Default = navigator.ffi.double();
   ```
 
   ### 要求
@@ -5745,7 +5841,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.double |
+  | 位置 | navigator.ffi.double |
 
   ---
 
@@ -5754,7 +5850,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.char([value: BigInt]) : TypeChar
+  navigator.ffi.char([value: BigInt]) : TypeChar
   ```
 
   ### 参数
@@ -5775,13 +5871,13 @@ c
   - `value` 不是 **BigInt**。
 
   ### 备注
-  **char** 会创建一个字符类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **char** 会创建一个字符类型对象。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **char**。
   ```js
-  const c0 = navigator.dll.char(BigInt(65));
-  const c0Default = navigator.dll.char();
+  const c0 = navigator.ffi.char(BigInt(65));
+  const c0Default = navigator.ffi.char();
   ```
 
   ### 要求
@@ -5791,7 +5887,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.char |
+  | 位置 | navigator.ffi.char |
 
   ---
 
@@ -5800,7 +5896,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.unsignedChar([value: BigInt]) : TypeUnsignedChar
+  navigator.ffi.unsignedChar([value: BigInt]) : TypeUnsignedChar
   ```
 
   ### 参数
@@ -5821,13 +5917,13 @@ c
   - `value` 不是 **BigInt**。
 
   ### 备注
-  **unsignedChar** 会创建一个无符号字符类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **unsignedChar** 会创建一个无符号字符类型对象。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **unsignedChar**。
   ```js
-  const uc0 = navigator.dll.unsignedChar(BigInt(65));
-  const uc0Default = navigator.dll.unsignedChar();
+  const uc0 = navigator.ffi.unsignedChar(BigInt(65));
+  const uc0Default = navigator.ffi.unsignedChar();
   ```
 
   ### 要求
@@ -5837,7 +5933,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.unsignedChar |
+  | 位置 | navigator.ffi.unsignedChar |
 
   ---
 
@@ -5846,7 +5942,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.short([value: BigInt]) : TypeShort
+  navigator.ffi.short([value: BigInt]) : TypeShort
   ```
 
   ### 参数
@@ -5867,13 +5963,13 @@ c
   - `value` 不是 **BigInt**。
 
   ### 备注
-  **short** 会创建一个短整型类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **short** 会创建一个短整型类型对象。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **short**。
   ```js
-  const s0 = navigator.dll.short(BigInt(0));
-  const s0Default = navigator.dll.short();
+  const s0 = navigator.ffi.short(BigInt(0));
+  const s0Default = navigator.ffi.short();
   ```
 
   ### 要求
@@ -5883,7 +5979,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.short |
+  | 位置 | navigator.ffi.short |
 
   ---
 
@@ -5892,7 +5988,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.unsignedShort([value: BigInt]) : TypeUnsignedShort
+  navigator.ffi.unsignedShort([value: BigInt]) : TypeUnsignedShort
   ```
 
   ### 参数
@@ -5913,13 +6009,13 @@ c
   - `value` 不是 **BigInt**。
 
   ### 备注
-  **unsignedShort** 会创建一个无符号短整型类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **unsignedShort** 会创建一个无符号短整型类型对象。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **unsignedShort**。
   ```js
-  const us0 = navigator.dll.unsignedShort(BigInt(0));
-  const us0Default = navigator.dll.unsignedShort();
+  const us0 = navigator.ffi.unsignedShort(BigInt(0));
+  const us0Default = navigator.ffi.unsignedShort();
   ```
 
   ### 要求
@@ -5929,7 +6025,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.unsignedShort |
+  | 位置 | navigator.ffi.unsignedShort |
 
   ---
 
@@ -5938,7 +6034,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.longDouble([value: number]) : TypeLongDouble
+  navigator.ffi.longDouble([value: number]) : TypeLongDouble
   ```
 
   ### 参数
@@ -5959,13 +6055,13 @@ c
   - `value` 不是 **number**。
 
   ### 备注
-  **longDouble** 会创建一个长双精度浮点类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **longDouble** 会创建一个长双精度浮点类型对象。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **longDouble**。
   ```js
-  const ld0 = navigator.dll.longDouble(0.0);
-  const ld0Default = navigator.dll.longDouble();
+  const ld0 = navigator.ffi.longDouble(0.0);
+  const ld0Default = navigator.ffi.longDouble();
   ```
 
   ### 要求
@@ -5975,7 +6071,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.longDouble |
+  | 位置 | navigator.ffi.longDouble |
 
   ---
 
@@ -5984,7 +6080,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.wcharT([value: BigInt]) : TypeWcharT
+  navigator.ffi.wcharT([value: BigInt]) : TypeWcharT
   ```
 
   ### 参数
@@ -6005,13 +6101,13 @@ c
   - `value` 不是 **BigInt**。
 
   ### 备注
-  **wcharT** 会创建一个宽字符类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **wcharT** 会创建一个宽字符类型对象。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **wcharT**。
   ```js
-  const wc0 = navigator.dll.wcharT(BigInt(65));
-  const wc0Default = navigator.dll.wcharT();
+  const wc0 = navigator.ffi.wcharT(BigInt(65));
+  const wc0Default = navigator.ffi.wcharT();
   ```
 
   ### 要求
@@ -6021,7 +6117,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.wcharT |
+  | 位置 | navigator.ffi.wcharT |
 
   ---
 
@@ -6030,7 +6126,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.wcharTPtr([value: string]) : TypeWcharTPtr
+  navigator.ffi.wcharTPtr([value: string]) : TypeWcharTPtr
   ```
 
   ### 参数
@@ -6051,13 +6147,13 @@ c
   - `value` 不是 **string**。
 
   ### 备注
-  **wcharTPtr** 会创建一个宽字符串指针类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **wcharTPtr** 会创建一个宽字符串指针类型对象。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **wcharTPtr**。
   ```js
-  const wstr = navigator.dll.wcharTPtr("Hello World!");
-  const wstrDefault = navigator.dll.wcharTPtr();
+  const wstr = navigator.ffi.wcharTPtr("Hello World!");
+  const wstrDefault = navigator.ffi.wcharTPtr();
   ```
 
   ### 要求
@@ -6067,7 +6163,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.wcharTPtr |
+  | 位置 | navigator.ffi.wcharTPtr |
 
   ---
 
@@ -6076,7 +6172,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.charPtr([value: string]) : TypeCharPtr
+  navigator.ffi.charPtr([value: string]) : TypeCharPtr
   ```
 
   ### 参数
@@ -6097,13 +6193,13 @@ c
   - `value` 不是 **string**。
 
   ### 备注
-  **charPtr** 会创建一个 UTF-8 字符串指针类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **charPtr** 会创建一个 UTF-8 字符串指针类型对象。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **charPtr**。
   ```js
-  const str = navigator.dll.charPtr("Hello world");
-  const strDefault = navigator.dll.charPtr();
+  const str = navigator.ffi.charPtr("Hello world");
+  const strDefault = navigator.ffi.charPtr();
   ```
 
   ### 要求
@@ -6113,7 +6209,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.charPtr |
+  | 位置 | navigator.ffi.charPtr |
 
   ---
 
@@ -6122,7 +6218,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.bool([value: Boolean]) : TypeBool
+  navigator.ffi.bool([value: Boolean]) : TypeBool
   ```
 
   ### 参数
@@ -6143,13 +6239,13 @@ c
   - `value` 不是 **Boolean**。
 
   ### 备注
-  **bool** 会创建一个布尔类型对象。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **bool** 会创建一个布尔类型对象。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **bool**。
   ```js
-  const b0 = navigator.dll.bool(true);
-  const b0Default = navigator.dll.bool();
+  const b0 = navigator.ffi.bool(true);
+  const b0Default = navigator.ffi.bool();
   ```
 
   ### 要求
@@ -6159,7 +6255,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.bool |
+  | 位置 | navigator.ffi.bool |
 
   ---
 
@@ -6168,7 +6264,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.struct(members: Array<Type*>[, pack: BigInt]) : TypeStruct
+  navigator.ffi.struct(members: Array<Type*>[, pack: BigInt]) : TypeStruct
   ```
 
   ### 参数
@@ -6189,12 +6285,12 @@ c
   - `members` 不是 **Array\<Type\*\>**。
 
   ### 备注
-  **struct** 会创建一个C结构体对象，其内存结构符合标准。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **struct** 会创建一个C结构体对象，其内存结构符合标准。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **struct**。
   ```js
-  const st = navigator.dll.struct([navigator.dll.int(BigInt(5)), navigator.dll.char(BigInt(65))]);
+  const st = navigator.ffi.struct([navigator.ffi.int(BigInt(5)), navigator.ffi.char(BigInt(65))]);
   ```
 
   ### 要求
@@ -6204,7 +6300,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.bool |
+  | 位置 | navigator.ffi.bool |
 
   ---
 
@@ -6213,7 +6309,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.load(libFileName: String[, config: Number]) : LoadDllNavigatorData
+  navigator.ffi.load(libFileName: String[, config: Number]) : LoadDllNavigatorData
   ```
 
   ### 参数
@@ -6306,8 +6402,8 @@ c
   ### 例
   以下示例代码演示如何使用 **load**。
   ```js
-  const dll = navigator.dll.load("C:\\mylib.dll");
-  dll.exports.printf(navigator.dll.charPtr("Hello World!"));
+  const dll = navigator.ffi.load("C:\\mylib.dll");
+  dll.exports.printf(navigator.ffi.charPtr("Hello World!"));
   ```
 
   ### 要求
@@ -6317,7 +6413,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.load |
+  | 位置 | navigator.ffi.load |
 
   ---
 
@@ -6326,7 +6422,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.sizeof(type: Type*) : BigInt
+  navigator.ffi.sizeof(type: Type*) : BigInt
   ```
 
   ### 参数
@@ -6352,7 +6448,7 @@ c
   ### 例
   以下示例代码演示如何使用 **sizeof**。
   ```js
-  const size = navigator.dll.sizeof(navigator.dll.double(0));
+  const size = navigator.ffi.sizeof(navigator.ffi.double(0));
   ```
 
   ### 要求
@@ -6362,7 +6458,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.sizeof |
+  | 位置 | navigator.ffi.sizeof |
 
   ---
 
@@ -6374,7 +6470,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.malloc(size: BigInt) : TypeVoidPtr
+  navigator.ffi.malloc(size: BigInt) : TypeVoidPtr
   ```
 
   ### 参数
@@ -6399,12 +6495,12 @@ c
   - 申请超大连续内存导致系统可用内存严重不足。
 
   ### 备注
-  **malloc** 函数会使用 C 原生接口 `malloc` 向操作系统申请一块长度为 `size` 字节的连续内存并返回其起始无类型指针。当该内存不再使用时，应当手动释放以节省内存空间。有关如何释放，请参阅 [navigator.dll.free](#free-函数)。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **malloc** 函数会使用 C 原生接口 `malloc` 向操作系统申请一块长度为 `size` 字节的连续内存并返回其起始无类型指针。当该内存不再使用时，应当手动释放以节省内存空间。有关如何释放，请参阅 [navigator.ffi.free](#free-函数)。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **malloc**。
   ```js
-  const ptr = navigator.dll.malloc(BigInt(1 * 1024 * 1024 * 1024));
+  const ptr = navigator.ffi.malloc(BigInt(1 * 1024 * 1024 * 1024));
   ```
 
   ### 要求
@@ -6414,7 +6510,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.malloc |
+  | 位置 | navigator.ffi.malloc |
 
   ---
 
@@ -6426,7 +6522,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.free(ptr: TypeVoidPtr) : void
+  navigator.ffi.free(ptr: TypeVoidPtr) : void
   ```
 
   ### 参数
@@ -6449,13 +6545,13 @@ c
   - `ptr` 不是空指针且不是有效地址。
 
   ### 备注
-  **free** 函数会释放由 **malloc** 函数申请的连续内存并将 **TypeVoidPtr** 的指针值置空。有关如何分配内存，请参阅 [navigator.dll.malloc](#malloc-函数)。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **free** 函数会释放由 **malloc** 函数申请的连续内存并将 **TypeVoidPtr** 的指针值置空。有关如何分配内存，请参阅 [navigator.ffi.malloc](#malloc-函数)。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **free**。
   ```js
-  const ptr = navigator.dll.malloc(BigInt(1 * 1024 * 1024 * 1024));
-  navigator.dll.free(ptr);
+  const ptr = navigator.ffi.malloc(BigInt(1 * 1024 * 1024 * 1024));
+  navigator.ffi.free(ptr);
   ```
 
   ### 要求
@@ -6465,7 +6561,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.free |
+  | 位置 | navigator.ffi.free |
 
   ---
 
@@ -6474,7 +6570,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.size(ptr: TypeVoidPtr) : void
+  navigator.ffi.size(ptr: TypeVoidPtr) : void
   ```
 
   ### 参数
@@ -6496,13 +6592,13 @@ c
   - `ptr` 无效。
 
   ### 备注
-  **size** 函数会返回由 **malloc** 函数申请的连续内存的总大小，单位为字节。有关如何分配内存，请参阅 [navigator.dll.malloc](#malloc-函数)。有关如何使用，请参阅 [navigator.dll.load](#load-函数)。
+  **size** 函数会返回由 **malloc** 函数申请的连续内存的总大小，单位为字节。有关如何分配内存，请参阅 [navigator.ffi.malloc](#malloc-函数)。有关如何使用，请参阅 [navigator.ffi.load](#load-函数)。
 
   ### 例
   以下示例代码演示如何使用 **size**。
   ```js
-  const ptr = navigator.dll.malloc(BigInt(1 * 1024 * 1024 * 1024));
-  console.log(navigator.dll.size(ptr)); //输出 1073741824
+  const ptr = navigator.ffi.malloc(BigInt(1 * 1024 * 1024 * 1024));
+  console.log(navigator.ffi.size(ptr)); //输出 1073741824
   ```
 
   ### 要求
@@ -6512,7 +6608,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.size |
+  | 位置 | navigator.ffi.size |
 
   ---
 
@@ -6525,7 +6621,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.assign(ptr: TypeVoidPtr, source: Type*[, size: BigInt]) : void
+  navigator.ffi.assign(ptr: TypeVoidPtr, source: Type*[, size: BigInt]) : void
   ```
 
   ### 参数
@@ -6564,13 +6660,13 @@ c
   - 非字符串类型写入内存越界。
 
   ### 备注
-  **assign** 函数会强制将堆指针解释为传入类型对象的类型并且将其值写入至已分配的堆内存，其中 **char\*** 和 **wchar_t\*** 类型在长度超出 `size - 1(2)` 时会截断至 `size - 1(2)` 并且补全终止符 `\0`。有关如何读取，请参阅 [navigator.dll.read](#read-函数)。有关如何分配内存，请参阅 [navigator.dll.malloc](#malloc-函数)。
+  **assign** 函数会强制将堆指针解释为传入类型对象的类型并且将其值写入至已分配的堆内存，其中 **char\*** 和 **wchar_t\*** 类型在长度超出 `size - 1(2)` 时会截断至 `size - 1(2)` 并且补全终止符 `\0`。有关如何读取，请参阅 [navigator.ffi.read](#read-函数)。有关如何分配内存，请参阅 [navigator.ffi.malloc](#malloc-函数)。
 
   ### 例
   以下示例代码演示如何使用 **assign**。
   ```js
-  const ptr = navigator.dll.malloc(navigator.dll.sizeof(navigator.dll.int(BigInt(0))));
-  navigator.dll.assign(ptr, navigator.dll.int(BigInt(123)));
+  const ptr = navigator.ffi.malloc(navigator.ffi.sizeof(navigator.ffi.int(BigInt(0))));
+  navigator.ffi.assign(ptr, navigator.ffi.int(BigInt(123)));
   ```
 
   ### 要求
@@ -6580,7 +6676,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.assign |
+  | 位置 | navigator.ffi.assign |
 
   ---
 
@@ -6593,7 +6689,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.read(ptr: TypeVoidPtr, output: Type*[, size: BigInt]) : void
+  navigator.ffi.read(ptr: TypeVoidPtr, output: Type*[, size: BigInt]) : void
   ```
 
   ### 参数
@@ -6633,15 +6729,15 @@ c
   - `ptr` 读取越界。
 
   ### 备注
-  **read** 函数会强制将堆指针解释为传入类型对象的类型并且读取堆内存写入到 `output` 中。有关如何写入，请参阅 [navigator.dll.assign](#assign-函数)。有关如何分配内存，请参阅 [navigator.dll.malloc](#malloc-函数)。
+  **read** 函数会强制将堆指针解释为传入类型对象的类型并且读取堆内存写入到 `output` 中。有关如何写入，请参阅 [navigator.ffi.assign](#assign-函数)。有关如何分配内存，请参阅 [navigator.ffi.malloc](#malloc-函数)。
 
   ### 例
   以下示例代码演示如何使用 **read**。
   ```js
-  const ptr = navigator.dll.malloc(navigator.dll.sizeof(navigator.dll.int(BigInt(0))));
-  navigator.dll.assign(ptr, navigator.dll.int(BigInt(123)));
-  const value = navigator.dll.int(BigInt(0));
-  navigator.dll.read(ptr, value);
+  const ptr = navigator.ffi.malloc(navigator.ffi.sizeof(navigator.ffi.int(BigInt(0))));
+  navigator.ffi.assign(ptr, navigator.ffi.int(BigInt(123)));
+  const value = navigator.ffi.int(BigInt(0));
+  navigator.ffi.read(ptr, value);
   console.log(value.value); //输出 123
   ```
 
@@ -6652,7 +6748,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.read |
+  | 位置 | navigator.ffi.read |
 
   ---
 
@@ -6665,7 +6761,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.readVoidPtrAsBinary(ptr: TypeVoidPtr[, size: BigInt]) : Uint8Array
+  navigator.ffi.readVoidPtrAsBinary(ptr: TypeVoidPtr[, size: BigInt]) : Uint8Array
   ```
 
   ### 参数
@@ -6696,14 +6792,14 @@ c
   - `ptr` 读取越界。
 
   ### 备注
-  **readVoidPtrAsBinary** 函数会从无符号指针指向的地址开始连续读取 `size` 长度的内存数据并且转换为 **Uint8Array** 类型返回。有关如何分配内存，请参阅 [navigator.dll.malloc](#malloc-函数)。
+  **readVoidPtrAsBinary** 函数会从无符号指针指向的地址开始连续读取 `size` 长度的内存数据并且转换为 **Uint8Array** 类型返回。有关如何分配内存，请参阅 [navigator.ffi.malloc](#malloc-函数)。
 
   ### 例
   以下示例代码演示如何使用 **readVoidPtrAsBinary**。
   ```js
-  const ptr = navigator.dll.malloc(navigator.dll.sizeof(navigator.dll.int(BigInt(0))));
-  navigator.dll.assign(ptr, navigator.dll.int(BigInt(123)));
-  console.log(navigator.dll.readVoidPtrAsBinary(ptr)[0]); //输出 123
+  const ptr = navigator.ffi.malloc(navigator.ffi.sizeof(navigator.ffi.int(BigInt(0))));
+  navigator.ffi.assign(ptr, navigator.ffi.int(BigInt(123)));
+  console.log(navigator.ffi.readVoidPtrAsBinary(ptr)[0]); //输出 123
   ```
 
   ### 要求
@@ -6713,7 +6809,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.readVoidPtrAsBinary |
+  | 位置 | navigator.ffi.readVoidPtrAsBinary |
 
   ---
 
@@ -6726,7 +6822,7 @@ c
 
   ### 语法
   ```js
-  navigator.dll.writeVoidPtrWithBinary(ptr: TypeVoidPtr, data: Uint8Array) : void
+  navigator.ffi.writeVoidPtrWithBinary(ptr: TypeVoidPtr, data: Uint8Array) : void
   ```
 
   ### 参数
@@ -6757,14 +6853,14 @@ c
   - `ptr` 写入越界。
 
   ### 备注
-  **writeVoidPtrWithBinary** 函数会从无符号指针指向的地址开始连续写入 `data.byteLength` 长度的内存数据。有关如何分配内存，请参阅 [navigator.dll.malloc](#malloc-函数)。
+  **writeVoidPtrWithBinary** 函数会从无符号指针指向的地址开始连续写入 `data.byteLength` 长度的内存数据。有关如何分配内存，请参阅 [navigator.ffi.malloc](#malloc-函数)。
 
   ### 例
   以下示例代码演示如何使用 **writeVoidPtrWithBinary**。
   ```js
-  const ptr = navigator.dll.malloc(navigator.dll.sizeof(navigator.dll.int(BigInt(0))));
-  navigator.dll.writeVoidPtrWithBinary(ptr, new Uint8Array(4).fill(1));
-  console.log(navigator.dll.readVoidPtrAsBinary(ptr).length, navigator.dll.readVoidPtrAsBinary(ptr)[0]); //输出 4 1
+  const ptr = navigator.ffi.malloc(navigator.ffi.sizeof(navigator.ffi.int(BigInt(0))));
+  navigator.ffi.writeVoidPtrWithBinary(ptr, new Uint8Array(4).fill(1));
+  console.log(navigator.ffi.readVoidPtrAsBinary(ptr).length, navigator.ffi.readVoidPtrAsBinary(ptr)[0]); //输出 4 1
   ```
 
   ### 要求
@@ -6774,7 +6870,7 @@ c
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.dll.writeVoidPtrAsBinary |
+  | 位置 | navigator.ffi.writeVoidPtrAsBinary |
 
   ---
 
