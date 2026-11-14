@@ -17570,7 +17570,7 @@ namespace cjs {
                     std::vector<JSV> needReleaseList = {};
                     std::vector<void*> argv(args.size());
                     auto freeValue = [&]() {
-                        if (return_buf) _freea(return_buf);
+                        if (return_buf) free(return_buf);
                         for (JSV jsv : needReleaseList) {
                             if (jsv.isValid()) {
                                 JSValue cargs[1] = {
@@ -17584,7 +17584,7 @@ namespace cjs {
                         }
                         };
                     for (size_t i = 0; i < args.size(); i++) {
-                        void* param_buf = _malloca(args[i]->size);
+                        void* param_buf = malloc(args[i]->size);
                         if (param_buf == nullptr) {
                             freeValue();
                             JS_ThrowInternalError(ctx, "[navigator.ffi.load->exports.call] Failed to alloc the memory of argument value");
