@@ -4,7 +4,7 @@
 >
 > 解释器版本: v4.3.20261114.01。接口行为会受运行环境影响，实际表现请以本地测试结果为准。
 >
-> 文档最后更新: 2026 年 11 月 14 日。
+> 文档最后更新: 2026 年 11 月 15 日。
 
 ## 前置说明
 
@@ -5425,7 +5425,7 @@
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.ffi.voidPtr |
+  | 位置 | navigator.ffi.void |
 
 ---
 
@@ -6300,7 +6300,7 @@
   | 目标平台 | Windows |
   | 所属模块 | navigator |
   | 可用性 | 全局可用 |
-  | 位置 | navigator.ffi.bool |
+  | 位置 | navigator.ffi.struct |
 
   ---
 
@@ -6388,7 +6388,7 @@
 
   关闭并释放该库的所有资源。
 
-  此函数通常因以下原因之一而抛出异常:
+  **load** 函数通常因以下原因之一而抛出异常:
 
   &bull; 传入参数的数量不等于 **1**。
 
@@ -6570,7 +6570,7 @@
 
   ### 语法
   ```js
-  navigator.ffi.size(ptr: TypeVoidPtr) : void
+  navigator.ffi.size(ptr: TypeVoidPtr) : BigInt
   ```
 
   ### 参数
