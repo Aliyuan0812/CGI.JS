@@ -156,34 +156,41 @@ extern "C" {
     }
     /**
      * @brief 创建新的JS闭包函数(完整)。
+     * @brief 创建新的JS闭包函数(2)。
      * @param in_name 函数名称。
      * @param in_func 函数体。
+     * @param in_magic 小整数。
+     * @param in_opaque 透传指针。
+     * @param in_onrelease 释放回调。
      * @param argLength 参数长度。
      * @return JS值(Function)。
      */
-    CJSValue CJS_NewClosureFunctionFull(cjs_string in_name, cjs_closureFunction in_func, int magic, void* opaque, JSCClosureFinalizerFunc onrelease, cjs_int argLength) {
+    CJSValue CJS_NewClosureFunctionFull(cjs_string in_name, cjs_closureFunction in_func, int in_magic, void* in_opaque, JSCClosureFinalizerFunc onrelease, cjs_int argLength) {
         static type_cjs_NewClosureFunction f = (type_cjs_NewClosureFunction)GetProcAddress(hm, "cjs_NewClosureFunction");
         CJS_Assert(f && "方法不可用");
-        return f(ctx, in_name, in_func, magic, opaque, onrelease, argLength);
+        return f(ctx, in_name, in_func, in_magic, in_opaque, onrelease, argLength);
     }
     /**
      * @brief 创建新的JS闭包函数(2)。
      * @param in_name 函数名称。
      * @param in_func 函数体。
-     * @param argLength 参数长度。
+     * @param in_magic 小整数。
+     * @param in_opaque 透传指针。
+     * @param in_onrelease 释放回调。
      * @return JS值(Function)。
      */
-    CJSValue CJS_NewClosureFunction2(cjs_string in_name, cjs_closureFunction in_func, int magic, void* opaque, JSCClosureFinalizerFunc onrelease) {
-        return CJS_NewClosureFunctionFull(in_name, in_func, magic, opaque, onrelease, 0);
+    CJSValue CJS_NewClosureFunction2(cjs_string in_name, cjs_closureFunction in_func, int in_magic, void* in_opaque, JSCClosureFinalizerFunc in_onrelease) {
+        return CJS_NewClosureFunctionFull(in_name, in_func, in_magic, in_opaque, in_onrelease, 0);
     }
     /**
      * @brief 创建新的JS闭包函数。
      * @param in_name 函数名称。
      * @param in_func 函数体。
+     * @param in_magic 小整数。
      * @return JS值(Function)。
      */
-    CJSValue CJS_NewClosureFunction(cjs_string in_name, cjs_closureFunction in_func, int magic) {
-        return CJS_NewClosureFunction2(in_name, in_func, magic, nullptr, nullptr);
+    CJSValue CJS_NewClosureFunction(cjs_string in_name, cjs_closureFunction in_func, int in_magic) {
+        return CJS_NewClosureFunction2(in_name, in_func, in_magic, nullptr, nullptr);
     }
     /**
     * @brief 创建新的JS布尔值。
